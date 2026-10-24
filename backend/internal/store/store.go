@@ -273,7 +273,7 @@ func (s *Store) listDueWithSentColumn(today time.Time, horizon int, sentColumn s
 		p.id, p.title, p.amount, p.currency, p.periodicity, p.next_payment_date, p.is_active, p.created_by, p.created_at, p.updated_at, p.deleted_at
 		FROM payment_occurrences o
 		JOIN recurring_payments p ON p.id = o.recurring_payment_id
-		WHERE o.is_paid = 0 AND o.` + sentColumn + ` IS NULL AND o.due_date >= ?
+		WHERE o.is_paid = 0 AND (o.` + sentColumn + ` IS NULL OR o.` + sentColumn + ` = '') AND o.due_date >= ?
 		AND p.deleted_at IS NULL AND p.is_active = 1`
 	rows, err := s.DB.Query(q, formatDate(today))
 	if err != nil {

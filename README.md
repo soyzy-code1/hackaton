@@ -27,6 +27,44 @@ scripts\check-stand.bat
 - **TELEGRAM_CHAT_ID:** значение должно быть реальным. `-1001234567890` — шаблон, с ним Telegram ответит `400 chat not found`. Перед демо добавьте бота в группу, получите chat ID через @userinfobot или getUpdates, впишите его в `.env` и выполните `docker compose restart bot`.
 - **405 Not Allowed на `/api/`:** проверьте [`infra/nginx/nginx.conf`](infra/nginx/nginx.conf), что `location /api/` содержит `proxy_pass_request_body on`, `proxy_method $request_method`, не содержит `try_files`/`limit_except`, а CORS `OPTIONS` возвращает 204. После изменений выполните `docker compose build --no-cache frontend nginx && docker compose up -d`.
 
+## SMTP-напоминания
+
+Go-бэкенд запускает notify worker, если `SMTP_ENABLED=true`, и проверяет должников при старте и далее с интервалом `NOTIFY_POLL_SECONDS`. Для Mail.ru используется порт `465` с implicit TLS. Укажите логин почты, пароль приложения, реальные `SMTP_FROM` и `SMTP_TO`, а не адреса-заглушки. После успешной отправки occurrence помечается через `email_reminder_sent_at`, поэтому повторная проверка не отправляет письмо повторно для той же записи.
+
+Проверка:
+
+```bash
+docker compose exec backend sh -c 'env | grep SMTP'
+docker compose logs --tail=100 backend | grep -iE 'smtp|notify'
+```
+
+Ошибки `535` означают неверные SMTP-учётные данные, `connection refused` — недоступный или неверный порт, `no such host` — неверный host. Проверяйте также папку «Спам».
+
+## Обход блокировки Telegram без системного VPN
+
+Если сервер не может напрямую подключиться к `api.telegram.org`, создайте бесплатный Cloudflare Worker и используйте его домен как `TELEGRAM_PROXY_WORKER_HOST`. Установите прокси-пакет внутри образа бота и задайте в `.env`:
+
+```env
+TELEGRAM_PROXY=http://127.0.0.1:8080
+TELEGRAM_PROXY_WORKER_HOST=<твой-worker>.workers.dev
+```
+
+После этого пересоберите и перезапустите бот:
+
+```bash
+docker compose up -d --build --force-recreate bot
+```
+
+`tgwsapiproxy` запускается внутри контейнера, а Telegram-запросы бота проходят через Cloudflare Worker. Системный VPN при этом не нужен: backend продолжает обращаться к SMTP напрямую.
+
+Проверка прокси:
+
+```bash
+docker compose exec bot sh -c 'curl -x http://127.0.0.1:8080 -s -o /dev/null -w "telegram via proxy: %{http_code}\\n" https://api.telegram.org'
+```
+
+Ожидаемый статус — `200` или `302`. Если запрос завершается timeout, проверьте домен и настройки Cloudflare Worker. Пустой `TELEGRAM_PROXY_WORKER_HOST` отключает запуск локального прокси и сохраняет прямое подключение.
+
 ## Как проверить, что напоминание реально доходит
 
 ```bash

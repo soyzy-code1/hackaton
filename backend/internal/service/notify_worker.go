@@ -21,6 +21,7 @@ func StartNotifyWorker(ctx context.Context, cfg config.Config, st *store.Store) 
 	}
 	go func() {
 		log.Printf("notify worker: started (poll %s)", interval)
+		runNotifyCycle(cfg, st)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -57,6 +58,7 @@ func runNotifyCycle(cfg config.Config, st *store.Store) {
 					DaysLeft:           dates.DaysLeft(o.DueDate, cfg.Timezone),
 				}
 				if err := notify.SendDueReminderEmail(cfg, data); err != nil {
+					log.Printf("notify: email send error for occurrence %d: %v", o.ID, err)
 					continue
 				}
 				if err := st.MarkEmailReminderSent(o.ID); err != nil {

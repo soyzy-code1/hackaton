@@ -14,10 +14,12 @@ the backend API for payment data.
 
 import asyncio
 import logging
+import os
 import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
 from api_client import BackendAPIClient
@@ -36,15 +38,18 @@ def setup_logging() -> None:
     # Quiet down noisy third-party loggers a bit.
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
-
 async def main() -> None:
     setup_logging()
     logger = logging.getLogger(__name__)
+
     logger.info("Starting Invoice Keeper bot...")
 
+    telegram_proxy = os.getenv("TELEGRAM_PROXY", "").strip()
+    session = AiohttpSession(proxy=telegram_proxy) if telegram_proxy else None
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=session,
     )
     dispatcher = Dispatcher()
 

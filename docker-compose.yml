@@ -145,6 +145,8 @@ services:
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-change_me_internal_token}
       ADMIN_BASIC_AUTH_LOGIN: ${ADMIN_LOGIN:-admin}
       ADMIN_BASIC_AUTH_PASSWORD: ${ADMIN_PASSWORD:-change_me_admin_password}
+      TELEGRAM_PROXY: ${TELEGRAM_PROXY:-}
+      TELEGRAM_PROXY_WORKER_HOST: ${TELEGRAM_PROXY_WORKER_HOST:-}
       SQLITE_PATH: /app/data/notifications.db
       TZ: ${TIMEZONE:-Europe/Moscow}
     volumes:
@@ -155,6 +157,15 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+    command: >
+      sh -c "
+      if [ -n \"$$TELEGRAM_PROXY_WORKER_HOST\" ]; then
+        echo 'Starting tgwsapiproxy...';
+        tgwsapiproxy --worker-host \"$$TELEGRAM_PROXY_WORKER_HOST\" &
+        sleep 2;
+      fi;
+      while true; do python main.py; code=$$?; echo \"bot exited with code $$code, retrying in 30s\"; sleep 30; done
+      "
     healthcheck:
       test: ["CMD-SHELL", "test -r /proc/1/cmdline || exit 1"]
       interval: 30s
