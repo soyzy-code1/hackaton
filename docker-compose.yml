@@ -1,0 +1,185 @@
+# =============================================================================
+#  Invoice Keeper — единое окружение
+#  Сервисы: PostgreSQL, Redis, Go backend, React frontend, Telegram bot, nginx
+# =============================================================================
+#
+#  ВАЖНО: рабочий режим Go-бэкенда — SQLite в volume invoice_backenddata.
+#  PostgreSQL оставлен в compose и проверяется healthcheck'ом, но текущий код
+#  backend требует адаптации SQL для PostgreSQL (см. README, раздел "Блокеры").
+
+name: invoice-keeper
+
+networks:
+  invoice_net:
+    name: invoice_net
+    driver: bridge
+
+volumes:
+  pgdata:
+    name: invoice_pgdata
+  redisdata:
+    name: invoice_redisdata
+  backenddata:
+    name: invoice_backenddata
+  botdata:
+    name: invoice_botdata
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: invoice_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-invoice_keeper}
+      TZ: ${TIMEZONE:-Europe/Moscow}
+      PGTZ: ${TIMEZONE:-Europe/Moscow}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [invoice_net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: invoice_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    environment:
+      TZ: ${TIMEZONE:-Europe/Moscow}
+    volumes:
+      - redisdata:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [invoice_net]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: invoice-keeper/backend:local
+    container_name: invoice_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # ВАЖНО: Go-бэкенд (репозиторий reznicenkodaniil5/hack) написан под SQLite:
+      #   - DDL миграций использует "INTEGER PRIMARY KEY AUTOINCREMENT";
+      #   - все запросы используют плейсхолдер "?" (не поддерживается pgx);
+      #   - код полагается на Result.LastInsertId() (pgx его не поддерживает).
+      # PostgreSQL-режим требует правки Go-кода — см. README, раздел "Блокеры".
+      # Поэтому штатный режим — SQLite в постоянном volume'е.
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/invoice_keeper.db}
+      PORT: 8000
+      TZ: ${TIMEZONE:-Europe/Moscow}
+    volumes:
+      - backenddata:/app/data
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8000/api/v1/openapi.json || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [invoice_net]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        FRONTEND_DIR: ${FRONTEND_DIR:-frontend}
+        VITE_API_URL: ${VITE_API_URL:-/api/v1}
+        VITE_USE_MOCK: ${VITE_USE_MOCK:-false}
+        VITE_ADMIN_USERNAME: ${ADMIN_LOGIN:-admin}
+    image: invoice-keeper/frontend:local
+    container_name: invoice_frontend
+    restart: unless-stopped
+    environment:
+      TZ: ${TIMEZONE:-Europe/Moscow}
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [invoice_net]
+
+  bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    image: invoice-keeper/bot:local
+    container_name: invoice_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-change_me_internal_token}
+      ADMIN_BASIC_AUTH_LOGIN: ${ADMIN_LOGIN:-admin}
+      ADMIN_BASIC_AUTH_PASSWORD: ${ADMIN_PASSWORD:-change_me_admin_password}
+      SQLITE_PATH: /app/data/notifications.db
+      TZ: ${TIMEZONE:-Europe/Moscow}
+    volumes:
+      - botdata:/app/data
+      - botdata:/data
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -r /proc/1/cmdline || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [invoice_net]
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: invoice_nginx
+    restart: unless-stopped
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks: [invoice_net]

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+.cache/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Окружение
+.env
+.env.local
+.env.*.local
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Данные / бэкапы
+*.sqlite3
+*.db
+**/invoice_keeper.db
+backup/
+backups/
+*.sql.gz

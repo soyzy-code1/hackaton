@@ -1,0 +1,117 @@
+# =============================================================================
+#  Invoice Keeper — BACKEND (FastAPI/Django)
+#  Мультистадийная сборка:
+#    stage 1 "builder" — установка Python-зависимостей в /install
+#    stage 2 "runtime" — чистый минимальный образ без компилятора
+# =============================================================================
+# syntax=docker/dockerfile:1
+
+# -----------------------------------------------------------------------------
+# STAGE 1: builder — собираем зависимости
+# -----------------------------------------------------------------------------
+FROM python:3.11-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /build
+
+# build-essential нужен для пакетов без готовых wheels (asyncpg/psycopg2 и т.п.)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        libpq-dev \
+        pkgconfig \
+ && rm -rf /var/lib/apt/lists/*
+
+# Копируем контекст целиком: путь к requirements.txt может быть
+# backend/requirements.txt, backend/app/requirements.txt или pyproject.toml
+COPY . /src
+
+# Гарантируем существование каталогов: COPY --from=builder не должен падать,
+# если каталога ещё нет (код придёт от другой команды позже).
+RUN mkdir -p /src/backend /src/bot
+
+# Детерминированный поиск манифеста зависимостей бэкенда:
+# сначала стандартные пути, затем — первый найденный requirements*.txt в backend/
+RUN set -eux; \
+    REQ=""; \
+    for cand in /src/backend/requirements.txt \
+                /src/backend/app/requirements.txt \
+                /src/backend/backend/requirements.txt; do \
+        if [ -f "$cand" ]; then REQ="$cand"; break; fi; \
+    done; \
+    if [ -z "$REQ" ]; then \
+        REQ="$(find /src/backend -maxdepth 3 -type f -name 'requirements*.txt' \
+                -not -path '*/node_modules/*' 2>/dev/null | sort | head -n 1)"; \
+    fi; \
+    if [ -n "$REQ" ]; then \
+        echo ">>> Установка зависимостей из $REQ"; \
+        pip install --prefix=/install -r "$REQ"; \
+    elif [ -f /src/backend/pyproject.toml ]; then \
+        echo ">>> Установка пакета backend из pyproject.toml"; \
+        pip install --prefix=/install /src/backend; \
+    else \
+        echo ">>> ВНИМАНИЕ: requirements.txt не найден — зависимости не установлены"; \
+    fi; \
+    echo ">>> Установленные console-скрипты:"; \
+    ls /install/bin 2>/dev/null || echo "(нет)"
+
+# Alembic-конфиг и каталоги миграций переносим в отдельную папку:
+# COPY в рантайм-стадии упал бы, если бы файла не существовало.
+RUN set -eux; \
+    mkdir -p /opt/backend-extra; \
+    for item in alembic.ini alembic migrations; do \
+        if [ -e "/src/backend/${item}" ]; then \
+            cp -a "/src/backend/${item}" /opt/backend-extra/; \
+            echo ">>> Дополнительно: backend/${item}"; \
+        fi; \
+    done
+
+# -----------------------------------------------------------------------------
+# STAGE 2: runtime — итоговый образ
+# -----------------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    PATH="/usr/local/bin:${PATH}" \
+    TZ=Europe/Moscow
+
+# curl нужен для healthcheck, libpq5 — для psycopg2, tzdata — для TIMEZONE
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        curl \
+        libpq5 \
+        tzdata \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
+ && echo "${TZ}" > /etc/timezone
+
+WORKDIR /app
+
+# Зависимости из builder (lib/python3.11/site-packages + bin)
+COPY --from=builder /install /usr/local
+
+# Исходники бэкенда
+COPY --from=builder /src/backend /app/backend
+# Скрипты инициализации/ожидания сервисов
+COPY --from=builder /src/scripts /scripts
+
+# Alembic-конфиг/миграции (если были в проекте) — содержимое каталога всегда валидно для COPY
+COPY --from=builder /opt/backend-extra/ /app/backend/
+
+RUN chmod +x /scripts/*.sh 2>/dev/null || true \
+ && mkdir -p /app/data /tmp
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=10 \
+    CMD curl -fsS http://localhost:8000/health || curl -fsS http://localhost:8000/docs || exit 1
+
+# entrypoint дожидается готовности db/redis, накатывает миграции и запускает API
+CMD ["/scripts/entrypoint-backend.sh"]

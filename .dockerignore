@@ -1,0 +1,42 @@
+# Артефакты сборки и виртуальные окружения не должны попадать в build context
+.git
+**/.git
+.gitignore
+.env
+.env.*
+**/.env
+**/.env.local
+**/.env.*.local
+!.env.example
+**/*.tsbuildinfo
+
+**/node_modules
+**/dist
+**/build
+**/.next
+**/.cache
+**/.vite
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.egg-info
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/venv
+**/env
+
+# Локальные БД / дампы
+*.sqlite3
+*.db
+**/invoice_keeper.db
+*.sql.gz
+backup
+backups
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+Thumbs.db

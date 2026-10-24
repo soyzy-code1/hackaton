@@ -1,0 +1,60 @@
+# =============================================================================
+#  Invoice Keeper — FRONTEND (React + TypeScript + Vite)
+#  Источник: https://github.com/Vatalone/aeza (код размещён в ./frontend)
+# =============================================================================
+# syntax=docker/dockerfile:1
+
+ARG FRONTEND_DIR=frontend
+
+# -----------------------------------------------------------------------------
+# STAGE 1: builder — установка npm-зависимостей и сборка бандла
+# -----------------------------------------------------------------------------
+FROM node:20-alpine AS builder
+
+ARG FRONTEND_DIR
+
+WORKDIR /app
+
+# Сначала только манифесты — слой с зависимостями кешируется отдельно
+COPY ${FRONTEND_DIR}/package.json ${FRONTEND_DIR}/package-lock.json ./
+
+# Есть package-lock.json -> воспроизводимая установка через npm ci
+RUN npm ci --no-audit --no-fund
+
+# Исходники фронтенда (node_modules/dist/.env исключены через .dockerignore).
+# Вся папка копируется целиком — tsconfig/vite.config лежат в её корне.
+COPY ${FRONTEND_DIR}/ ./
+
+# Переменные Vite вшиваются в бандл на этапе сборки.
+# Внимание: всё, что начинается с VITE_, попадает в публичный JS — секреты сюда не передавать.
+ARG VITE_API_URL=/api/v1
+ARG VITE_USE_MOCK=false
+ARG VITE_ADMIN_USERNAME=admin
+ENV VITE_API_URL=${VITE_API_URL} \
+    VITE_USE_MOCK=${VITE_USE_MOCK} \
+    VITE_ADMIN_USERNAME=${VITE_ADMIN_USERNAME}
+
+# tsc -b && vite build -> /app/dist
+RUN npm run build && test -f /app/dist/index.html
+
+# -----------------------------------------------------------------------------
+# STAGE 2: runtime — статика через nginx
+# -----------------------------------------------------------------------------
+FROM nginx:1.27-alpine AS runtime
+
+ENV TZ=Europe/Moscow
+
+RUN apk add --no-cache tzdata \
+ && ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
+ && echo "${TZ}" > /etc/timezone \
+ && rm -f /etc/nginx/conf.d/default.conf
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY infra/nginx/frontend.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=10 \
+    CMD wget -q --spider http://localhost/healthz || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

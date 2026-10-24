@@ -1,0 +1,20 @@
+# Секреты и локальное окружение не должны попадать в образ
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+*.db
+*.sqlite3
+venv/
+.venv/
+env/
+.git/
+.gitignore
+handoff-package/
+handoff-package.zip
+temp_*.py
+*_test_*.py
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
