@@ -98,6 +98,21 @@ func requireAdmin(c *gin.Context) {
 	c.Next()
 }
 
+func requireUser(c *gin.Context) {
+	u, ok := currentUser(c)
+	if !ok {
+		writeAppError(c, apperr.AuthRequired)
+		c.Abort()
+		return
+	}
+	if u.Role != "user" {
+		writeAppError(c, apperr.Forbidden)
+		c.Abort()
+		return
+	}
+	c.Next()
+}
+
 func currentUser(c *gin.Context) (*models.User, bool) {
 	v, ok := c.Get(string(userKey))
 	if !ok {

@@ -5,6 +5,7 @@ import {
   BarChart3,
   Bell,
   CalendarClock,
+  ClipboardList,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -12,6 +13,7 @@ import {
   Settings,
   Users,
   X,
+  MessageCircleQuestion,
 } from 'lucide-react';
 import { isUsingMockBackend } from '@/api/client';
 import { ROLE_LABELS } from '@/api/types';
@@ -23,6 +25,7 @@ interface NavItem {
   label: string;
   icon: ReactNode;
   adminOnly?: boolean;
+  userOnly?: boolean;
   end?: boolean;
 }
 
@@ -31,8 +34,10 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/calendar', label: 'Календарь', icon: <CalendarClock className="h-4 w-4" aria-hidden="true" /> },
   { to: '/analytics', label: 'Аналитика', icon: <BarChart3 className="h-4 w-4" aria-hidden="true" /> },
   { to: '/notifications', label: 'Уведомления', icon: <Bell className="h-4 w-4" aria-hidden="true" /> },
+  { to: '/assistant', label: 'Помощь ИИ', icon: <MessageCircleQuestion className="h-4 w-4" aria-hidden="true" />, userOnly: true },
   { to: '/recurring', label: 'Платежи', icon: <ReceiptText className="h-4 w-4" aria-hidden="true" />, adminOnly: true },
   { to: '/users', label: 'Пользователи', icon: <Users className="h-4 w-4" aria-hidden="true" />, adminOnly: true },
+  { to: '/audit-log', label: 'Журнал действий', icon: <ClipboardList className="h-4 w-4" aria-hidden="true" />, adminOnly: true },
   { to: '/settings', label: 'Настройки', icon: <Settings className="h-4 w-4" aria-hidden="true" /> },
 ];
 
@@ -44,7 +49,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const isAdmin = user?.role === 'admin';
-  const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+  const visibleItems = NAV_ITEMS.filter((item) => (!item.adminOnly || isAdmin) && (!item.userOnly || !isAdmin));
 
   // The mock backend is only detected after the first request, so the badge
   // is refreshed on every navigation.

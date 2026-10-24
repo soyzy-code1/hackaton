@@ -37,8 +37,8 @@ const DEFAULT_SETTINGS = {
   weeklyDigestEnabled: false,
   theme: 'light' as Theme,
   budgetPeriod: 'month' as BudgetPeriod,
-  budget: { RUB: 100000, USD: 500, EUR: 500 },
-  yearlyBudget: { RUB: 1_200_000, USD: 6_000, EUR: 6_000 },
+  budget: { RUB: 0, USD: 0, EUR: 0 },
+  yearlyBudget: { RUB: 0, USD: 0, EUR: 0 },
   cashBalance: { RUB: 150000, USD: 1000, EUR: 1000 },
   activity: [] as ActivityEntry[],
 };

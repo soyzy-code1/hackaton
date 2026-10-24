@@ -29,6 +29,8 @@ import type {
   PaginatedResponse,
   PaymentOccurrence,
   RecurringPayment,
+  AuditLogEntry,
+  AuditLogResponse,
   Summary,
   SummaryQuery,
   UpdateOccurrencePayload,
@@ -249,7 +251,9 @@ function normalizeOccurrence(raw: unknown): PaymentOccurrence {
 }
 
 function normalizeList<T>(value: unknown, mapper: (raw: unknown) => T): T[] {
-  return Array.isArray(value) ? value.map(mapper) : [];
+  if (Array.isArray(value)) return value.map(mapper);
+  const record = asRecord(value);
+  return Array.isArray(record.items) ? record.items.map(mapper) : [];
 }
 
 /** `2026-10-19T00:00:00.000Z` → `2026-10-19` (backend accepts plain dates). */
@@ -369,6 +373,7 @@ export const api = {
               title: payload.name,
               amount: String(payload.amount),
               next_payment_date: toApiDate(payload.next_payment_date),
+              assigned_user_ids: payload.assigned_user_ids?.map((id) => Number(id)),
             }),
           });
           return normalizeRecurringPayment(response);
@@ -631,6 +636,38 @@ export const api = {
         },
         () => mockDeleteUser(id),
       ),
+  },
+
+  auditLog: {
+    list: async (query?: { page?: number; page_size?: number; action?: string }): Promise<AuditLogResponse> => {
+      const response = await request<unknown>('/audit-log', { method: 'GET' }, query);
+      const record = asRecord(response);
+      const items = normalizeList(response, (raw): AuditLogEntry => {
+        const item = asRecord(raw);
+        return {
+          id: asNumber(item.id), user_id: item.user_id == null ? null : asNumber(item.user_id),
+          action: asString(item.action), entity: asString(item.entity),
+          entity_id: item.entity_id == null ? null : asNumber(item.entity_id),
+          details: asString(item.details), created_at: asString(item.created_at),
+        };
+      });
+      return {
+        items, total: asNumber(record.total) || items.length,
+        page: asNumber(record.page) || query?.page || 1,
+        page_size: asNumber(record.page_size) || query?.page_size || 25,
+      };
+    },
+  },
+
+  assistant: {
+    chat: async (message: string): Promise<{ message: string }> => {
+      const response = await request<unknown>('/chat/gigachat', {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+      const record = asRecord(response);
+      return { message: asString(record.message) };
+    },
   },
 };
 

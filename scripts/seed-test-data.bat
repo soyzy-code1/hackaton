@@ -2,7 +2,8 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0.."
 
-set "BASE_URL=http://localhost"
+set "BASE_URL=%BASE_URL%"
+if not defined BASE_URL set "BASE_URL=http://193.233.246.197"
 set "LOGIN=%ADMIN_LOGIN%"
 if not defined LOGIN set "LOGIN=admin"
 set "PASSWORD=%ADMIN_PASSWORD%"

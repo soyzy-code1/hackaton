@@ -340,6 +340,36 @@ func (s *Store) ListDueForWebhookReminder(today time.Time, horizon int) ([]model
 	return s.listDueWithSentColumn(today, horizon, "webhook_reminder_sent_at")
 }
 
+func (s *Store) CreateAuditLog(logEntry *models.AuditLog) error {
+	_, err := s.DB.Exec(`INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?, ?, ?, ?, ?)`,
+		logEntry.UserID, logEntry.Action, logEntry.Entity, logEntry.EntityID, logEntry.Details)
+	return err
+}
+
+func (s *Store) ListAuditLogs(page, pageSize int, action string) ([]models.AuditLog, int, error) {
+	if page < 1 { page = 1 }
+	if pageSize < 1 || pageSize > 100 { pageSize = 25 }
+	where := " WHERE 1=1"
+	args := []interface{}{}
+	if action != "" { where += " AND action = ?"; args = append(args, action) }
+	var total int
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM audit_log"+where, args...).Scan(&total); err != nil { return nil, 0, err }
+	queryArgs := append(append([]interface{}{}, args...), pageSize, (page-1)*pageSize)
+	rows, err := s.DB.Query(`SELECT id, user_id, action, entity, entity_id, details, created_at FROM audit_log`+where+` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil { return nil, 0, err }
+	defer rows.Close()
+	items := make([]models.AuditLog, 0)
+	for rows.Next() {
+		var item models.AuditLog
+		var userID, entityID sql.NullInt64
+		if err := rows.Scan(&item.ID, &userID, &item.Action, &item.Entity, &entityID, &item.Details, &item.CreatedAt); err != nil { return nil, 0, err }
+		if userID.Valid { v := int(userID.Int64); item.UserID = &v }
+		if entityID.Valid { v := int(entityID.Int64); item.EntityID = &v }
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func (s *Store) CreateNotification(n *models.Notification) error {
 	_, err := s.DB.Exec(`INSERT INTO notifications (type, title, message, occurrence_id, user_id, channel) VALUES (?, ?, ?, ?, ?, ?)`,
 		n.Type, n.Title, n.Message, n.OccurrenceID, n.UserID, n.Channel)

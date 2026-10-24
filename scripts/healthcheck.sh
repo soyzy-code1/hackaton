@@ -48,8 +48,8 @@ done
 # -----------------------------------------------------------------------------
 sec "2. HTTP-эндпоинты"
 # -----------------------------------------------------------------------------
-BASE="${BASE_URL:-http://localhost}"
-FRONT="${FRONTEND_URL:-http://localhost:3000}"
+BASE="${BASE_URL:-http://193.233.246.197}"
+FRONT="${FRONTEND_URL:-http://193.233.246.197:3000}"
 
 check_http() {
     local url="$1" expect="$2" label="$3"

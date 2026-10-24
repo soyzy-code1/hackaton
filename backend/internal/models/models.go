@@ -33,6 +33,16 @@ type RecurringPayment struct {
 	DeletedAt       *time.Time
 }
 
+type AuditLog struct {
+	ID        int
+	UserID    *int
+	Action    string
+	Entity    string
+	EntityID  *int
+	Details   string
+	CreatedAt time.Time
+}
+
 type Notification struct {
 	ID           int
 	Type         string

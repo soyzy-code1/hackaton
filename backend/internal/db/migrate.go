@@ -24,6 +24,9 @@ var userBudgetsSQL string
 //go:embed migrations/006_payment_assignments.sql
 var paymentAssignmentsSQL string
 
+//go:embed migrations/007_audit_log.sql
+var auditLogSQL string
+
 func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(initSQL); err != nil {
 		return err
@@ -65,6 +68,13 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 	for _, stmt := range strings.Split(paymentAssignmentsSQL, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" { continue }
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return err
+		}
+	}
+	for _, stmt := range strings.Split(auditLogSQL, ";") {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" { continue }
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {

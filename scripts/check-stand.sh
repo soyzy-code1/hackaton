@@ -7,18 +7,19 @@ echo "== compose ps =="
 docker compose ps
 
 echo "== frontend =="
-curl -sf -o /dev/null -w "frontend: %{http_code}\n" http://localhost/
+BASE="${BASE_URL:-http://193.233.246.197}"
+curl -sf -o /dev/null -w "frontend: %{http_code}\n" "$BASE/"
 
 echo "== swagger =="
-curl -sf -o /dev/null -w "swagger:  %{http_code}\n" http://localhost/api/v1/docs
+curl -sf -o /dev/null -w "swagger:  %{http_code}\n" "$BASE/api/v1/docs"
 
 echo "== openapi =="
-curl -sf -o /dev/null -w "openapi:  %{http_code}\n" http://localhost/api/v1/openapi.json
+curl -sf -o /dev/null -w "openapi:  %{http_code}\n" "$BASE/api/v1/openapi.json"
 
 echo "== login =="
 # В .env используется ADMIN_LOGIN/ADMIN_PASSWORD, а Go-бэкенд создаёт admin
 # при первой миграции в SQLite volume invoice_backenddata.
-curl -sf -X POST http://localhost/api/v1/auth/login \
+curl -sf -X POST "$BASE/api/v1/auth/login" \
   -H "Content-Type: application/json" \
   -d "{\"login\":\"${ADMIN_LOGIN:-admin}\",\"password\":\"${ADMIN_PASSWORD:-admin}\"}" \
   -o /dev/null -w "login:    %{http_code}\n" || echo "login: FAILED"

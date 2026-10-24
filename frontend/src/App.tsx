@@ -31,6 +31,12 @@ const RecurringPaymentsPage = lazy(() =>
 const UsersPage = lazy(() =>
   import('@/pages/UsersPage').then((m) => ({ default: m.UsersPage })),
 );
+const AuditLogPage = lazy(() =>
+  import('@/pages/AuditLogPage').then((m) => ({ default: m.AuditLogPage })),
+);
+const AssistantPage = lazy(() =>
+  import('@/pages/AssistantPage').then((m) => ({ default: m.AssistantPage })),
+);
 
 function PageLoader() {
   return (
@@ -64,6 +70,8 @@ export function App() {
         <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
         <Route path="/recurring" element={<Protected role="admin"><RecurringPaymentsPage /></Protected>} />
         <Route path="/users" element={<Protected role="admin"><UsersPage /></Protected>} />
+        <Route path="/audit-log" element={<Protected role="admin"><AuditLogPage /></Protected>} />
+        <Route path="/assistant" element={<Protected role="user"><AssistantPage /></Protected>} />
         <Route path="/404" element={<NotFoundPage />} />
         <Route path="*" element={<Navigate to="/404" replace />} />
       </Routes>

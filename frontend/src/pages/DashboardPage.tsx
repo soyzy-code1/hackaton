@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Download, Search, SlidersHorizontal } from 'lucide-react';
 import { api } from '@/api/client';
@@ -77,6 +77,21 @@ export function DashboardPage() {
 
   const summary = useAsyncResource<Summary>(() => api.summary.get(), []);
   const occurrences = useAsyncResource<PaymentOccurrence[]>(() => api.occurrences.list(), []);
+  const [monthlyBudget, setMonthlyBudget] = useState<Record<Currency, number>>({ RUB: 0, USD: 0, EUR: 0 });
+  const [yearlyBudget, setYearlyBudget] = useState<Record<Currency, number>>({ RUB: 0, USD: 0, EUR: 0 });
+
+  useEffect(() => {
+    void api.budgets.list().then((plans) => {
+      const monthly = { RUB: 0, USD: 0, EUR: 0 };
+      const yearly = { RUB: 0, USD: 0, EUR: 0 };
+      for (const plan of plans) {
+        monthly[plan.currency] = plan.monthly_limit;
+        yearly[plan.currency] = plan.yearly_limit;
+      }
+      setMonthlyBudget(monthly);
+      setYearlyBudget(yearly);
+    });
+  }, []);
 
   const rows = useMemo(() => occurrences.data ?? [], [occurrences.data]);
 
@@ -272,6 +287,8 @@ export function DashboardPage() {
             onAsOfChange={setAsOf}
             period={budgetPeriod}
             onPeriodChange={setBudgetPeriod}
+            monthlyBudget={monthlyBudget}
+            yearlyBudget={yearlyBudget}
           />
           <CashFlowWidget occurrences={rows} asOf={asOf} />
         </div>

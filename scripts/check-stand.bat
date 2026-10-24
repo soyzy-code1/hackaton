@@ -6,11 +6,14 @@ echo == compose ps ==
 docker compose ps
 
 echo == frontend ==
-curl.exe -sS -f -o NUL -w "frontend: %%{http_code}\n" http://localhost/
-echo == swagger ==
-curl.exe -sS -f -o NUL -w "swagger:  %%{http_code}\n" http://localhost/api/v1/docs
-echo == openapi ==
-curl.exe -sS -f -o NUL -w "openapi:  %%{http_code}\n" http://localhost/api/v1/openapi.json
+set "BASE_URL=%BASE_URL%"
+if not defined BASE_URL set "BASE_URL=http://193.233.246.197"
+
+curl.exe -sS -f -o NUL -w "frontend: %%{http_code}\n" "%BASE_URL%/"
+ echo == swagger ==
+ curl.exe -sS -f -o NUL -w "swagger:  %%{http_code}\n" "%BASE_URL%/api/v1/docs"
+ echo == openapi ==
+ curl.exe -sS -f -o NUL -w "openapi:  %%{http_code}\n" "%BASE_URL%/api/v1/openapi.json"
 
 echo == login ==
 set "LOGIN=%ADMIN_LOGIN%"
@@ -18,7 +21,7 @@ if not defined LOGIN set "LOGIN=admin"
 set "PASSWORD=%ADMIN_PASSWORD%"
 if not defined PASSWORD set "PASSWORD=admin"
 set "LOGIN_CODE="
-for /f "usebackq delims=" %%R in (`curl.exe -sS -X POST http://localhost/api/v1/auth/login -H "Content-Type: application/json" -d "{\"login\":\"%LOGIN%\",\"password\":\"%PASSWORD%\"}" -o NUL -w "%%{http_code}"`) do set "LOGIN_CODE=%%R"
+for /f "usebackq delims=" %%R in (`curl.exe -sS -X POST "%BASE_URL%/api/v1/auth/login" -H "Content-Type: application/json" -d "{\"login\":\"%LOGIN%\",\"password\":\"%PASSWORD%\"}" -o NUL -w "%%{http_code}"`) do set "LOGIN_CODE=%%R"
 echo login:    %LOGIN_CODE%
 
 echo == bot status ==

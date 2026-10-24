@@ -14,7 +14,6 @@ export interface RecurringPayment {
   name: string;
   amount: number;
   currency: Currency;
-  /** ISO string */
   next_payment_date: string;
   periodicity: Periodicity;
   category?: PaymentCategory;
@@ -22,11 +21,6 @@ export interface RecurringPayment {
   receipt_url?: string | null;
   tags?: string[];
   archived?: boolean;
-  /**
-   * Ids of the users this payment is assigned to. Every user has a personal
-   * ledger: the periods and their marks are tracked per user, so one user's
-   * actions never affect another user's payment state.
-   */
   assigned_user_ids: string[];
 }
 
@@ -34,12 +28,8 @@ export type PaymentStatus = 'paid' | 'unpaid' | 'overdue';
 export type PaymentCategory = 'housing' | 'subscriptions' | 'services' | 'infrastructure' | 'transport' | 'other';
 
 export const PAYMENT_CATEGORY_LABELS: Record<PaymentCategory, string> = {
-  housing: 'Жильё',
-  subscriptions: 'Подписки',
-  services: 'Сервисы',
-  infrastructure: 'Инфраструктура',
-  transport: 'Транспорт',
-  other: 'Другое',
+  housing: 'Жильё', subscriptions: 'Подписки', services: 'Сервисы',
+  infrastructure: 'Инфраструктура', transport: 'Транспорт', other: 'Другое',
 };
 
 export interface PaymentOccurrence {
@@ -48,14 +38,9 @@ export interface PaymentOccurrence {
   name: string;
   amount: number;
   currency: Currency;
-  /** ISO string */
   due_date: string;
   status: PaymentStatus;
   actual_payment_date: string | null;
-  /**
-   * Id of the owner of this period. Occurrences are per user: a user only
-   * ever sees and edits the periods of their own ledger.
-   */
   user_id: string;
 }
 
@@ -80,17 +65,8 @@ export interface PaginatedResponse<T> {
   page_size: number;
 }
 
-export interface Summary {
-  RUB: number;
-  USD: number;
-  EUR: number;
-}
-
-export interface SummaryQuery {
-  as_of_date?: string;
-  from_date?: string;
-  to_date?: string;
-}
+export interface Summary { RUB: number; USD: number; EUR: number; }
+export interface SummaryQuery { as_of_date?: string; from_date?: string; to_date?: string; }
 
 export interface BudgetPlan {
   currency: Currency;
@@ -103,113 +79,37 @@ export interface BudgetPlan {
 }
 
 export interface CsvImportRow {
-  name: string;
-  amount: number;
-  currency: Currency;
-  next_payment_date: string;
-  periodicity: Periodicity;
-  assigned_usernames?: string[];
-  category?: PaymentCategory;
-  notes?: string;
+  name: string; amount: number; currency: Currency; next_payment_date: string;
+  periodicity: Periodicity; assigned_usernames?: string[]; category?: PaymentCategory; notes?: string;
 }
+export interface CsvImportError { row: number; message: string; }
+export interface CsvImportPreview { valid_rows: CsvImportRow[]; errors: CsvImportError[]; }
 
-export interface CsvImportError {
-  row: number;
-  message: string;
-}
-
-export interface CsvImportPreview {
-  valid_rows: CsvImportRow[];
-  errors: CsvImportError[];
-}
-
-export interface LoginResponse {
-  user: User;
-}
-
-export interface LoginPayload {
-  username: string;
-  password: string;
-}
+export interface LoginResponse { user: User; }
+export interface LoginPayload { username: string; password: string; }
 
 export interface CreateRecurringPaymentPayload {
-  name: string;
-  amount: number;
-  currency: Currency;
-  next_payment_date: string;
-  periodicity: Periodicity;
-  /** Users the payment is assigned to. Defaults to every non-admin user. */
-  assigned_user_ids?: string[];
-  category?: PaymentCategory;
-  notes?: string;
-  receipt_url?: string | null;
-  tags?: string[];
+  name: string; amount: number; currency: Currency; next_payment_date: string; periodicity: Periodicity;
+  assigned_user_ids?: string[]; category?: PaymentCategory; notes?: string; receipt_url?: string | null; tags?: string[];
 }
-
 export interface UpdateRecurringPaymentPayload {
-  name?: string;
-  amount?: number;
-  currency?: Currency;
-  next_payment_date?: string;
-  periodicity?: Periodicity;
-  category?: PaymentCategory;
-  notes?: string;
-  receipt_url?: string | null;
-  assigned_user_ids?: string[];
-  tags?: string[];
-  archived?: boolean;
+  name?: string; amount?: number; currency?: Currency; next_payment_date?: string; periodicity?: Periodicity;
+  category?: PaymentCategory; notes?: string; receipt_url?: string | null; assigned_user_ids?: string[]; tags?: string[]; archived?: boolean;
 }
+export interface NotificationQuery { page?: number; page_size?: number; unread_only?: boolean; }
+export interface BulkOccurrenceUpdatePayload { occurrence_ids: string[]; status: Extract<PaymentStatus, 'paid' | 'unpaid'>; actual_payment_date?: string | null; }
+export interface UpdateOccurrencePayload { status?: Extract<PaymentStatus, 'paid' | 'unpaid'>; actual_payment_date?: string | null; }
+export interface CreateUserPayload { username: string; password: string; role?: Role; }
+export interface UpdateUserPayload { username?: string; password?: string; role?: Role; }
 
-export interface NotificationQuery {
-  page?: number;
-  page_size?: number;
-  unread_only?: boolean;
+export interface AuditLogEntry {
+  id: number; user_id: number | null; action: string; entity: string; entity_id: number | null; details: string; created_at: string;
 }
-
-export interface BulkOccurrenceUpdatePayload {
-  occurrence_ids: string[];
-  status: Extract<PaymentStatus, 'paid' | 'unpaid'>;
-  actual_payment_date?: string | null;
-}
-
-export interface UpdateOccurrencePayload {
-  status?: Extract<PaymentStatus, 'paid' | 'unpaid'>;
-  actual_payment_date?: string | null;
-}
-
-export interface CreateUserPayload {
-  username: string;
-  password: string;
-  role?: Role;
-}
-
-export interface UpdateUserPayload {
-  username?: string;
-  password?: string;
-  role?: Role;
-}
+export interface AuditLogResponse { items: AuditLogEntry[]; total: number; page: number; page_size: number; }
 
 export const CURRENCIES: readonly Currency[] = ['RUB', 'USD', 'EUR'] as const;
-
-export const CURRENCY_SYMBOLS: Record<Currency, string> = {
-  RUB: '₽',
-  USD: '$',
-  EUR: '€',
-};
-
+export const CURRENCY_SYMBOLS: Record<Currency, string> = { RUB: '₽', USD: '$', EUR: '€' };
 export const PERIODICITIES: readonly Periodicity[] = ['monthly'] as const;
-
-export const PERIODICITY_LABELS: Record<Periodicity, string> = {
-  monthly: 'Ежемесячно',
-};
-
-export const STATUS_LABELS: Record<PaymentStatus, string> = {
-  paid: 'Оплачено',
-  unpaid: 'Не оплачено',
-  overdue: 'Просрочка',
-};
-
-export const ROLE_LABELS: Record<Role, string> = {
-  admin: 'Администратор',
-  user: 'Пользователь',
-};
+export const PERIODICITY_LABELS: Record<Periodicity, string> = { monthly: 'Ежемесячно' };
+export const STATUS_LABELS: Record<PaymentStatus, string> = { paid: 'Оплачено', unpaid: 'Не оплачено', overdue: 'Просрочка' };
+export const ROLE_LABELS: Record<Role, string> = { admin: 'Администратор', user: 'Пользователь' };

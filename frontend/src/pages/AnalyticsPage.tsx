@@ -16,10 +16,8 @@ import { Input } from '@/components/ui/Input';
 
 export function AnalyticsPage() {
   const occurrences = useAsyncResource<PaymentOccurrence[]>(() => api.occurrences.list(), []);
-  const localBudget = useSettingsStore((state) => state.budget);
-  const localYearlyBudget = useSettingsStore((state) => state.yearlyBudget);
-  const [budget, setBudgetState] = useState(localBudget);
-  const [yearlyBudget, setYearlyBudgetState] = useState(localYearlyBudget);
+  const [budget, setBudgetState] = useState<Record<Currency, number>>({ RUB: 0, USD: 0, EUR: 0 });
+  const [yearlyBudget, setYearlyBudgetState] = useState<Record<Currency, number>>({ RUB: 0, USD: 0, EUR: 0 });
   const [budgetSaving, setBudgetSaving] = useState(false);
   const [budgetLoading, setBudgetLoading] = useState(true);
   const [budgetError, setBudgetError] = useState<string | null>(null);
@@ -33,8 +31,8 @@ export function AnalyticsPage() {
     void api.budgets.list()
       .then((plans) => {
         if (cancelled) return;
-        const monthly = { ...localBudget };
-        const yearly = { ...localYearlyBudget };
+        const monthly: Record<Currency, number> = { RUB: 0, USD: 0, EUR: 0 };
+        const yearly: Record<Currency, number> = { RUB: 0, USD: 0, EUR: 0 };
         for (const plan of plans) {
           monthly[plan.currency] = plan.monthly_limit;
           yearly[plan.currency] = plan.yearly_limit;

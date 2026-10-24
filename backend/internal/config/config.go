@@ -19,6 +19,14 @@ type Config struct {
 	TelegramChatID     string
 	InternalAPIToken   string
 
+	GigaChatEnabled       bool
+	GigaChatCredentials    string
+	GigaChatScope         string
+	GigaChatAuthURL       string
+	GigaChatAPIURL        string
+	GigaChatModel         string
+	GigaChatVerifyTLS     bool
+
 	SMTPEnabled    bool
 	SMTPHost       string
 	SMTPPort       int
@@ -50,6 +58,14 @@ func Load() Config {
 		TelegramChatID:     getenv("TELEGRAM_CHAT_ID", ""),
 		InternalAPIToken:   getenv("INTERNAL_API_TOKEN", "change-me-internal"),
 
+		GigaChatEnabled:    getenvBool("GIGACHAT_ENABLED", false),
+		GigaChatCredentials: getenv("GIGACHAT_CREDENTIALS", ""),
+		GigaChatScope:      getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"),
+		GigaChatAuthURL:    getenv("GIGACHAT_AUTH_URL", "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"),
+		GigaChatAPIURL:     getenv("GIGACHAT_API_URL", "https://gigachat.devices.sberbank.ru/api/v1"),
+		GigaChatModel:      getenv("GIGACHAT_MODEL", "GigaChat"),
+		GigaChatVerifyTLS:  getenvBool("GIGACHAT_VERIFY_TLS", true),
+
 		SMTPEnabled:    getenvBool("SMTP_ENABLED", false),
 		SMTPHost:       getenv("SMTP_HOST", ""),
 		SMTPPort:       getenvInt("SMTP_PORT", 587),
@@ -72,6 +88,11 @@ func (c Config) SMTPConfigured() bool {
 		c.SMTPPassword != "" &&
 		c.SMTPFrom != "" &&
 		c.SMTPTo != ""
+}
+
+func (c Config) GigaChatConfigured() bool {
+	return c.GigaChatEnabled && strings.TrimSpace(c.GigaChatCredentials) != "" &&
+		strings.TrimSpace(c.GigaChatAuthURL) != "" && strings.TrimSpace(c.GigaChatAPIURL) != ""
 }
 
 func (c Config) WebhookConfigured() bool {

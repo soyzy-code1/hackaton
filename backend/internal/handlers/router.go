@@ -55,6 +55,8 @@ func NewRouter(cfg config.Config, st *store.Store) *gin.Engine {
 	occ.PATCH("/:id", s.patchOccurrence)
 
 	v1.GET("/payments/summary", authMiddleware(cfg, st), s.summary)
+	v1.POST("/chat/gigachat", authMiddleware(cfg, st), requireUser, s.chatWithGigaChat)
+	v1.GET("/audit-log", authMiddleware(cfg, st), requireAdmin, s.listAuditLogs)
 
 	budgets := v1.Group("/budgets", authMiddleware(cfg, st))
 	budgets.GET("", s.listBudgets)
@@ -201,8 +203,26 @@ func (s *Server) login(c *gin.Context) {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   c.Request.TLS != nil,
 	})
+	_ = s.St.CreateAuditLog(&models.AuditLog{UserID: &user.ID, Action: "login", Entity: "user", EntityID: &user.ID, Details: "successful authentication"})
 	c.JSON(http.StatusOK, gin.H{"user": toUserOut(user)})
 }
+
+func (s *Server) listAuditLogs(c *gin.Context) {
+	page, _ := strconvAtoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconvAtoi(c.DefaultQuery("page_size", "25"))
+	items, total, err := s.St.ListAuditLogs(page, pageSize, strings.TrimSpace(c.Query("action")))
+	if err != nil { c.Status(http.StatusInternalServerError); return }
+	out := make([]gin.H, 0, len(items))
+	for _, item := range items {
+		out = append(out, gin.H{
+			"id": item.ID, "user_id": item.UserID, "action": item.Action,
+			"entity": item.Entity, "entity_id": item.EntityID, "details": item.Details,
+			"created_at": item.CreatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"items": out, "total": total, "page": page, "page_size": pageSize})
+}
+
 
 func (s *Server) me(c *gin.Context) {
 	u, _ := currentUser(c)
@@ -450,6 +470,8 @@ func (s *Server) createRecurringPayment(c *gin.Context) {
 		ID: p.ID, Title: p.Title, Amount: p.Amount.StringFixed(2),
 		Currency: p.Currency, NextPaymentDate: dates.FormatDate(p.NextPaymentDate),
 	})
+	adminID := admin.ID
+	_ = s.St.CreateAuditLog(&models.AuditLog{UserID: &adminID, Action: "create", Entity: "recurring_payment", EntityID: &p.ID, Details: p.Title})
 	c.JSON(http.StatusCreated, toPaymentOut(p))
 }
 
@@ -531,6 +553,9 @@ func (s *Server) updateRecurringPayment(c *gin.Context) {
 	if body.AssignedUserIDs == nil {
 		payment.AssignedUserIDs, _ = s.St.PaymentAssignees(id)
 	}
+	admin, _ := currentUser(c)
+	adminID := admin.ID
+	_ = s.St.CreateAuditLog(&models.AuditLog{UserID: &adminID, Action: "update", Entity: "recurring_payment", EntityID: &payment.ID, Details: payment.Title})
 	c.JSON(http.StatusOK, toPaymentOut(payment))
 }
 
@@ -574,6 +599,9 @@ func (s *Server) deleteRecurringPayment(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	admin, _ := currentUser(c)
+	adminID := admin.ID
+	_ = s.St.CreateAuditLog(&models.AuditLog{UserID: &adminID, Action: "delete", Entity: "recurring_payment", EntityID: &id, Details: p.Title})
 	c.Status(http.StatusNoContent)
 }
 
@@ -774,6 +802,9 @@ func (s *Server) patchOccurrence(c *gin.Context) {
 			PaidAt: paidAtStr, PaidBy: paidBy,
 		})
 	}
+	details := "payment status changed"
+	if updated.Payment != nil { details = updated.Payment.Title }
+	_ = s.St.CreateAuditLog(&models.AuditLog{UserID: &user.ID, Action: map[bool]string{true: "mark_paid", false: "mark_unpaid"}[updated.IsPaid], Entity: "payment_occurrence", EntityID: &updated.ID, Details: details})
 	s.writeOccurrenceJSON(c, updated)
 }
 

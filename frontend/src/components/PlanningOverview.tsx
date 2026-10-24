@@ -2,7 +2,6 @@ import { useMemo } from 'react';
 import { CalendarSearch } from 'lucide-react';
 import type { Currency, PaymentOccurrence } from '@/api/types';
 import { CURRENCIES, CURRENCY_SYMBOLS } from '@/api/types';
-import { useSettingsStore } from '@/store/settings';
 import type { BudgetPeriod } from '@/store/settings';
 import { formatAmount } from '@/lib/date';
 import { countByCurrency, monthRange, totalsAsOf, yearRange } from '@/lib/planning';
@@ -16,6 +15,8 @@ interface PlanningOverviewProps {
   onAsOfChange: (value: string) => void;
   period: BudgetPeriod;
   onPeriodChange: (value: BudgetPeriod) => void;
+  monthlyBudget: Record<Currency, number>;
+  yearlyBudget: Record<Currency, number>;
 }
 
 /**
@@ -28,9 +29,9 @@ export function PlanningOverview({
   onAsOfChange,
   period,
   onPeriodChange,
+  monthlyBudget,
+  yearlyBudget,
 }: PlanningOverviewProps) {
-  const budget = useSettingsStore((state) => state.budget);
-  const yearlyBudget = useSettingsStore((state) => state.yearlyBudget);
 
   const range = useMemo(
     () => (period === 'month' ? monthRange(asOf) : yearRange(asOf)),
@@ -38,7 +39,7 @@ export function PlanningOverview({
   );
   const totals = useMemo(() => totalsAsOf(occurrences, range, asOf), [occurrences, range, asOf]);
   const counts = useMemo(() => countByCurrency(occurrences, range), [occurrences, range]);
-  const limits = period === 'month' ? budget : yearlyBudget;
+  const limits = period === 'month' ? monthlyBudget : yearlyBudget;
 
   const overdueParts = CURRENCIES.filter((c) => totals[c].overdueCount > 0).map(
     (c) => `${totals[c].overdueCount} в ${c}`,

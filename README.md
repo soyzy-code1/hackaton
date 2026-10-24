@@ -1,5 +1,9 @@
 # Invoice Keeper — запуск окружения
 
+## Production на VPS
+
+Внешний адрес стенда: `http://193.233.246.197/`. `localhost` в Docker healthcheck'ах и `http://backend:8000` для внутренней связи контейнеров являются намеренными и не заменяются. Для диагностических скриптов можно переопределить адрес переменной `BASE_URL`.
+
 ## Быстрая настройка своих Telegram-данных
 
 1. Скопируйте корневой [`.env.example`](.env.example) в `.env`.
@@ -139,13 +143,13 @@ docker compose ps
 
 Основные адреса:
 
-- приложение: <http://localhost/>;
-- Swagger UI: <http://localhost/api/v1/docs>;
-- OpenAPI: <http://localhost/api/v1/openapi.json>.
+- приложение: <http://193.233.246.197/>;
+- Swagger UI: <http://193.233.246.197/api/v1/docs>;
+- OpenAPI: <http://193.233.246.197/api/v1/openapi.json>.
 
 ## Сценарий демонстрации
 
-1. Открыть <http://localhost/> и войти как `admin` с паролем из `.env`.
+1. Открыть <http://193.233.246.197/> и войти как `admin` с паролем из `.env`.
 2. Выполнить [`scripts/seed-test-data.sh`](scripts/seed-test-data.sh).
 3. В UI показать аренду RUB, сервер USD и подписку EUR со сроком через 2 дня.
 4. Дождаться планировщика и проверить `docker compose logs -f bot`.

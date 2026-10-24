@@ -12,8 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"invoicekeeper/internal/config"
-	"invoicekeeper/internal/db"
 	"invoicekeeper/internal/dates"
+	"invoicekeeper/internal/db"
 	"invoicekeeper/internal/handlers"
 	"invoicekeeper/internal/service"
 	"invoicekeeper/internal/store"
@@ -51,9 +51,13 @@ func login(t *testing.T, r *gin.Engine, login, pass string) string {
 	if w.Code != 200 {
 		t.Fatalf("login %s: %d %s", login, w.Code, w.Body.String())
 	}
-	var resp map[string]interface{}
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	return resp["access_token"].(string)
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == "access_token" {
+			return cookie.Value
+		}
+	}
+	t.Fatalf("login %s: access_token cookie missing: %s", login, w.Body.String())
+	return ""
 }
 
 func TestAuthFlow(t *testing.T) {
@@ -61,6 +65,7 @@ func TestAuthFlow(t *testing.T) {
 	token := login(t, r, "admin", "admin123")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != 200 {
@@ -68,6 +73,7 @@ func TestAuthFlow(t *testing.T) {
 	}
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 	req2.Header.Set("Authorization", "Bearer "+token)
+	req2.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 	if w2.Code != 204 {
@@ -75,6 +81,7 @@ func TestAuthFlow(t *testing.T) {
 	}
 	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 	req3.Header.Set("Authorization", "Bearer "+token)
+	req3.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	w3 := httptest.NewRecorder()
 	r.ServeHTTP(w3, req3)
 	if w3.Code != 401 {
@@ -88,15 +95,20 @@ func TestMonthClamp(t *testing.T) {
 	create := `{"title":"Rent","amount":"1000","currency":"RUB","next_payment_date":"2026-01-31"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recurring-payments", bytes.NewBufferString(create))
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	var payment map[string]interface{}
 	_ = json.Unmarshal(w.Body.Bytes(), &payment)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create payment: %d %s", w.Code, w.Body.String())
+	}
 	pid := int(payment["id"].(float64))
 
 	reqL := httptest.NewRequest(http.MethodGet, "/api/v1/payment-occurrences?recurring_payment_id="+itoa(pid), nil)
 	reqL.Header.Set("Authorization", "Bearer "+token)
+	reqL.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	wL := httptest.NewRecorder()
 	r.ServeHTTP(wL, reqL)
 	var occs []map[string]interface{}
@@ -106,12 +118,14 @@ func TestMonthClamp(t *testing.T) {
 	patch := `{"is_paid":true,"paid_at":"2026-01-31"}`
 	reqP := httptest.NewRequest(http.MethodPatch, "/api/v1/payment-occurrences/"+itoa(oid), bytes.NewBufferString(patch))
 	reqP.Header.Set("Authorization", "Bearer "+token)
+	reqP.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	reqP.Header.Set("Content-Type", "application/json")
 	wP := httptest.NewRecorder()
 	r.ServeHTTP(wP, reqP)
 
 	reqL2 := httptest.NewRequest(http.MethodGet, "/api/v1/payment-occurrences?recurring_payment_id="+itoa(pid), nil)
 	reqL2.Header.Set("Authorization", "Bearer "+token)
+	reqL2.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	wL2 := httptest.NewRecorder()
 	r.ServeHTTP(wL2, reqL2)
 	_ = json.Unmarshal(wL2.Body.Bytes(), &occs)
@@ -129,6 +143,7 @@ func TestInternalDue(t *testing.T) {
 	create := `{"title":"Reminder","amount":"10","currency":"RUB","next_payment_date":"` + dates.FormatDate(due) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recurring-payments", bytes.NewBufferString(create))
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -161,12 +176,14 @@ func TestFrontendMinimalContract(t *testing.T) {
 	create := `{"title":"Подписка","amount":"99.00","currency":"EUR","next_payment_date":"2026-12-01"}`
 	reqC := httptest.NewRequest(http.MethodPost, "/api/v1/recurring-payments", bytes.NewBufferString(create))
 	reqC.Header.Set("Authorization", "Bearer "+token)
+	reqC.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	reqC.Header.Set("Content-Type", "application/json")
 	wC := httptest.NewRecorder()
 	r.ServeHTTP(wC, reqC)
 
 	reqG := httptest.NewRequest(http.MethodGet, "/api/v1/payment-occurrences?view=minimal", nil)
 	reqG.Header.Set("Authorization", "Bearer "+token)
+	reqG.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	wG := httptest.NewRecorder()
 	r.ServeHTTP(wG, reqG)
 	if wG.Code != 200 {
@@ -191,6 +208,7 @@ func TestFrontendMinimalContract(t *testing.T) {
 	patch := `{"is_paid":true,"actual_payment_date":"` + paidDay + `"}`
 	reqP := httptest.NewRequest(http.MethodPatch, "/api/v1/payment-occurrences/"+itoa(oid)+"?view=minimal", bytes.NewBufferString(patch))
 	reqP.Header.Set("Authorization", "Bearer "+token)
+	reqP.AddCookie(&http.Cookie{Name: "access_token", Value: token})
 	reqP.Header.Set("Content-Type", "application/json")
 	wP := httptest.NewRecorder()
 	r.ServeHTTP(wP, reqP)
@@ -204,6 +222,132 @@ func TestFrontendMinimalContract(t *testing.T) {
 	}
 	if one["actual_payment_date"] != paidDay {
 		t.Fatalf("date %v", one["actual_payment_date"])
+	}
+}
+
+func TestAuditLogAccessAndPagination(t *testing.T) {
+	r, st := testRouter(t)
+	token := login(t, r, "admin", "admin123")
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/audit-log?page=1&page_size=10&action=login", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+	response := httptest.NewRecorder()
+	r.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("audit log status: %d %s", response.Code, response.Body.String())
+	}
+
+	var payload struct {
+		Items    []map[string]interface{} `json:"items"`
+		Total    int                      `json:"total"`
+		Page     int                      `json:"page"`
+		PageSize int                      `json:"page_size"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Total < 1 || len(payload.Items) < 1 || payload.Page != 1 || payload.PageSize != 10 {
+		t.Fatalf("unexpected audit payload: %+v", payload)
+	}
+	if payload.Items[0]["action"] != "login" {
+		t.Fatalf("unexpected audit action: %+v", payload.Items[0])
+	}
+
+	user, err := st.GetUserByLogin("admin")
+	if err != nil || user == nil {
+		t.Fatalf("admin lookup: %v", err)
+	}
+	_ = user
+
+	unauthorized := httptest.NewRequest(http.MethodGet, "/api/v1/audit-log", nil)
+	unauthorizedResponse := httptest.NewRecorder()
+	r.ServeHTTP(unauthorizedResponse, unauthorized)
+	if unauthorizedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized audit log status: %d", unauthorizedResponse.Code)
+	}
+}
+
+func TestGigaChatUserAccessAndProxy(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth":
+			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Basic test-credentials" {
+				http.Error(w, "unexpected oauth request", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"test-access-token","expires_at":4102444800000}`))
+		case "/api/v1/chat/completions":
+			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer test-access-token" {
+				http.Error(w, "unexpected completion request", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Тестовый ответ GigaChat"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer provider.Close()
+
+	for key, value := range map[string]string{
+		"GIGACHAT_ENABLED":     "true",
+		"GIGACHAT_CREDENTIALS": "test-credentials",
+		"GIGACHAT_AUTH_URL":    provider.URL + "/oauth",
+		"GIGACHAT_API_URL":     provider.URL + "/api/v1",
+		"GIGACHAT_MODEL":       "GigaChat",
+		"GIGACHAT_VERIFY_TLS":  "true",
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() {
+		for _, key := range []string{"GIGACHAT_ENABLED", "GIGACHAT_CREDENTIALS", "GIGACHAT_AUTH_URL", "GIGACHAT_API_URL", "GIGACHAT_MODEL", "GIGACHAT_VERIFY_TLS"} {
+			_ = os.Unsetenv(key)
+		}
+	}()
+
+	r, _ := testRouter(t)
+	adminToken := login(t, r, "admin", "admin123")
+
+	createUser := `{"login":"assistant-user","password":"user123"}`
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewBufferString(createUser))
+	createRequest.Header.Set("Authorization", "Bearer "+adminToken)
+	createRequest.AddCookie(&http.Cookie{Name: "access_token", Value: adminToken})
+	createRequest.Header.Set("Content-Type", "application/json")
+	createResponse := httptest.NewRecorder()
+	r.ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create user: %d %s", createResponse.Code, createResponse.Body.String())
+	}
+	userToken := login(t, r, "assistant-user", "user123")
+
+	adminRequest := httptest.NewRequest(http.MethodPost, "/api/v1/chat/gigachat", bytes.NewBufferString(`{"message":"admin access"}`))
+	adminRequest.Header.Set("Authorization", "Bearer "+adminToken)
+	adminRequest.AddCookie(&http.Cookie{Name: "access_token", Value: adminToken})
+	adminResponse := httptest.NewRecorder()
+	r.ServeHTTP(adminResponse, adminRequest)
+	if adminResponse.Code != http.StatusForbidden {
+		t.Fatalf("admin chat access: %d %s", adminResponse.Code, adminResponse.Body.String())
+	}
+
+	userRequest := httptest.NewRequest(http.MethodPost, "/api/v1/chat/gigachat", bytes.NewBufferString(`{"message":"Как вести бюджет?"}`))
+	userRequest.Header.Set("Authorization", "Bearer "+userToken)
+	userRequest.AddCookie(&http.Cookie{Name: "access_token", Value: userToken})
+	userRequest.Header.Set("Content-Type", "application/json")
+	userResponse := httptest.NewRecorder()
+	r.ServeHTTP(userResponse, userRequest)
+	if userResponse.Code != http.StatusOK || !bytes.Contains(userResponse.Body.Bytes(), []byte("Тестовый ответ GigaChat")) {
+		t.Fatalf("user chat: %d %s", userResponse.Code, userResponse.Body.String())
+	}
+
+	unauthorizedRequest := httptest.NewRequest(http.MethodPost, "/api/v1/chat/gigachat", bytes.NewBufferString(`{"message":"anonymous"}`))
+	unauthorizedResponse := httptest.NewRecorder()
+	r.ServeHTTP(unauthorizedResponse, unauthorizedRequest)
+	if unauthorizedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized chat access: %d %s", unauthorizedResponse.Code, unauthorizedResponse.Body.String())
 	}
 }
 
