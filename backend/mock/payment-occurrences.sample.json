@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "title": "Аренда офиса",
+    "amount": "85000.00",
+    "currency": "RUB",
+    "due_date": "2026-11-05",
+    "is_paid": false,
+    "actual_payment_date": null
+  },
+  {
+    "id": 2,
+    "title": "AWS",
+    "amount": "120.00",
+    "currency": "USD",
+    "due_date": "2026-11-10",
+    "is_paid": true,
+    "actual_payment_date": "2026-11-09"
+  },
+  {
+    "id": 3,
+    "title": "Figma",
+    "amount": "45.00",
+    "currency": "EUR",
+    "due_date": "2026-11-15",
+    "is_paid": false,
+    "actual_payment_date": null
+  }
+]

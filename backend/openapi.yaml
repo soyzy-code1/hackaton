@@ -1,0 +1,907 @@
+openapi: 3.1.0
+info:
+  title: Invoice Keeper API
+  description: |
+    REST API учёта регулярных платежей.
+
+    **Авторизация:** заголовок `Authorization: Bearer <access_token>` (кроме `/auth/login` и документации).
+
+    **Internal API (бот):** заголовок `X-Internal-Token` на маршрутах `/api/v1/internal/*`.
+  version: 1.0.0
+tags:
+  - name: auth
+    description: Вход, выход и текущая сессия
+  - name: users
+    description: Управление пользователями (только администратор)
+  - name: recurring-payments
+    description: Регулярные платежи
+  - name: payment-occurrences
+    description: Периоды оплаты (начисления)
+  - name: summary
+    description: Сводки по суммам
+  - name: internal
+    description: Служебные эндпоинты для Telegram-бота
+paths:
+  /api/v1/auth/login:
+    post:
+      tags:
+        - auth
+      summary: Вход в систему
+      description: Возвращает JWT и данные пользователя.
+      operationId: login_api_v1_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Успешный вход
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Неверный логин или пароль
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/me:
+    get:
+      tags:
+        - auth
+      summary: Текущий пользователь
+      description: Профиль по токену сессии.
+      operationId: me_api_v1_auth_me_get
+      responses:
+        '200':
+          description: Данные пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserOut'
+        '401':
+          description: Требуется авторизация
+      security:
+        - HTTPBearer: []
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - auth
+      summary: Выход
+      description: Отзывает текущий JWT (jti в revoked_tokens).
+      operationId: logout_api_v1_auth_logout_post
+      responses:
+        '204':
+          description: Сессия завершена
+        '401':
+          description: Требуется авторизация
+      security:
+        - HTTPBearer: []
+  /api/v1/users:
+    get:
+      tags:
+        - users
+      summary: Список пользователей
+      operationId: list_users_api_v1_users_get
+      responses:
+        '200':
+          description: Список учётных записей
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserOut'
+        '403':
+          description: Недостаточно прав
+      security:
+        - HTTPBearer: []
+    post:
+      tags:
+        - users
+      summary: Создать пользователя
+      description: Роль всегда user; назначить admin через API нельзя.
+      operationId: create_user_api_v1_users_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+        required: true
+      responses:
+        '201':
+          description: Пользователь создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserOut'
+        '409':
+          description: Логин уже занят
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+        - HTTPBearer: []
+  /api/v1/users/{user_id}:
+    patch:
+      tags:
+        - users
+      summary: Изменить пользователя
+      description: Нельзя менять login и role.
+      operationId: update_user_api_v1_users__user_id__patch
+      security:
+        - HTTPBearer: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: Идентификатор пользователя
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: Пользователь обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserOut'
+        '404':
+          description: Пользователь не найден
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+        - users
+      summary: Удалить пользователя
+      description: Удаление учётки с ролью admin запрещено.
+      operationId: delete_user_api_v1_users__user_id__delete
+      security:
+        - HTTPBearer: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: Идентификатор пользователя
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Пользователь удалён
+        '403':
+          description: Нельзя удалить администратора
+        '404':
+          description: Пользователь не найден
+  /api/v1/recurring-payments:
+    get:
+      tags:
+        - recurring-payments
+      summary: Список регулярных платежей
+      operationId: list_recurring_payments_api_v1_recurring_payments_get
+      security:
+        - HTTPBearer: []
+      parameters:
+        - name: currency
+          in: query
+          required: false
+          description: Фильтр по валюте (RUB, USD, EUR)
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+        - name: is_active
+          in: query
+          required: false
+          description: Только активные или остановленные
+          schema:
+            anyOf:
+              - type: boolean
+              - type: 'null'
+      responses:
+        '200':
+          description: Список платежей
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecurringPaymentOut'
+    post:
+      tags:
+        - recurring-payments
+      summary: Создать регулярный платёж
+      description: Только администратор. Сразу создаётся первый период оплаты.
+      operationId: create_recurring_payment_api_v1_recurring_payments_post
+      security:
+        - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecurringPaymentCreate'
+      responses:
+        '201':
+          description: Платёж создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringPaymentOut'
+        '403':
+          description: Недостаточно прав
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/recurring-payments/{payment_id}:
+    delete:
+      tags:
+        - recurring-payments
+      summary: Остановить платёж (soft delete)
+      description: is_active=false, периоды в истории сохраняются.
+      operationId: delete_recurring_payment_api_v1_recurring_payments__payment_id__delete
+      security:
+        - HTTPBearer: []
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          description: Идентификатор регулярного платежа
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Платёж остановлен
+        '404':
+          description: Платёж не найден
+  /api/v1/payment-occurrences:
+    get:
+      tags:
+        - payment-occurrences
+      summary: Список периодов оплаты
+      description: |
+        Поля `is_overdue` и `days_left` вычисляются по часовому поясу сервера (`TIMEZONE`).
+        При запросе для активных платежей подтягиваются недостающие периоды.
+      operationId: list_payment_occurrences_api_v1_payment_occurrences_get
+      security:
+        - HTTPBearer: []
+      parameters:
+        - name: currency
+          in: query
+          required: false
+          description: Валюта родительского платежа
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+        - name: status
+          in: query
+          required: false
+          description: 'paid — оплачен; unpaid — не оплачен и не просрочен; overdue — просрочен'
+          schema:
+            anyOf:
+              - type: string
+                enum: [paid, unpaid, overdue]
+              - type: 'null'
+        - name: recurring_payment_id
+          in: query
+          required: false
+          description: Фильтр по регулярному платежу
+          schema:
+            anyOf:
+              - type: integer
+              - type: 'null'
+        - name: from_date
+          in: query
+          required: false
+          description: Начало диапазона по due_date
+          schema:
+            anyOf:
+              - type: string
+                format: date
+              - type: 'null'
+        - name: to_date
+          in: query
+          required: false
+          description: Конец диапазона по due_date
+          schema:
+            anyOf:
+              - type: string
+                format: date
+              - type: 'null'
+        - name: view
+          in: query
+          required: false
+          description: minimal — контракт для фронта (id, title, amount, currency, due_date, is_paid, actual_payment_date)
+          schema:
+            type: string
+            enum: [minimal]
+      responses:
+        '200':
+          description: Список периодов
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/PaymentOccurrenceOut'
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/PaymentOccurrenceMinimal'
+  /api/v1/payment-occurrences/{occurrence_id}:
+    get:
+      tags:
+        - payment-occurrences
+      summary: Период оплаты по id
+      operationId: get_payment_occurrence_api_v1_payment_occurrences__occurrence_id__get
+      security:
+        - HTTPBearer: []
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [minimal]
+        - name: occurrence_id
+          in: path
+          required: true
+          description: Идентификатор периода
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Период найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentOccurrenceOut'
+        '404':
+          description: Период не найден
+    patch:
+      tags:
+        - payment-occurrences
+      summary: Отметить оплату / снять оплату
+      description: |
+        При is_paid=true создаётся следующий период (если его ещё нет).
+        При is_paid=false очищаются paid_at, actual_payment_date и paid_by.
+        Дата оплаты в теле — actual_payment_date (алиас paid_at).
+      operationId: patch_payment_occurrence_api_v1_payment_occurrences__occurrence_id__patch
+      security:
+        - HTTPBearer: []
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [minimal]
+        - name: occurrence_id
+          in: path
+          required: true
+          description: Идентификатор периода
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentOccurrencePatch'
+      responses:
+        '200':
+          description: Период обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentOccurrenceOut'
+        '404':
+          description: Период не найден
+        '422':
+          description: Ошибка валидации (например, paid_at в будущем)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/payments/summary:
+    get:
+      tags:
+        - summary
+      summary: Сводка по платежам
+      description: Суммы по валютам не конвертируются. По умолчанию — текущий месяц в TIMEZONE.
+      operationId: payments_summary_api_v1_payments_summary_get
+      security:
+        - HTTPBearer: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: Начало периода (дата due_date)
+          schema:
+            anyOf:
+              - type: string
+                format: date
+              - type: 'null'
+        - name: to
+          in: query
+          required: false
+          description: Конец периода (дата due_date)
+          schema:
+            anyOf:
+              - type: string
+                format: date
+              - type: 'null'
+      responses:
+        '200':
+          description: Сводка за период
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentsSummaryOut'
+  /api/v1/internal/due-occurrences:
+    get:
+      tags:
+        - internal
+      summary: Периоды для напоминания
+      description: |
+        Неоплаченные периоды с `due_date` от сегодня до `REMINDER_DAYS_BEFORE` дней вперёд,
+        у которых ещё не отправлялось напоминание (`reminder_sent_at` пусто).
+      operationId: due_occurrences_api_v1_internal_due_occurrences_get
+      parameters:
+        - name: X-Internal-Token
+          in: header
+          required: true
+          description: Секрет из INTERNAL_API_TOKEN
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Список для бота
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DueOccurrenceOut'
+        '401':
+          description: Неверный internal-токен
+  /api/v1/internal/occurrences/{occurrence_id}/mark-reminded:
+    post:
+      tags:
+        - internal
+      summary: Отметить напоминание отправленным
+      description: Идемпотентно — повторный вызов возвращает 200 без изменения времени.
+      operationId: mark_reminded_api_v1_internal_occurrences__occurrence_id__mark_reminded_post
+      parameters:
+        - name: occurrence_id
+          in: path
+          required: true
+          description: Идентификатор периода
+          schema:
+            type: integer
+        - name: X-Internal-Token
+          in: header
+          required: true
+          description: Секрет из INTERNAL_API_TOKEN
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Время напоминания записано
+        '200':
+          description: Уже было отмечено ранее
+        '404':
+          description: Период не найден
+        '401':
+          description: Неверный internal-токен
+components:
+  schemas:
+    Currency:
+      type: string
+      enum: [RUB, USD, EUR]
+      title: Валюта
+    CurrencySummary:
+      type: object
+      title: Суммы по одной валюте
+      required: [paid, unpaid, overdue, total]
+      properties:
+        paid:
+          type: string
+          title: Оплачено
+        unpaid:
+          type: string
+          title: К оплате (не просрочено)
+        overdue:
+          type: string
+          title: Просрочено
+        total:
+          type: string
+          title: Итого
+    DueOccurrenceOut:
+      type: object
+      title: Период для напоминания
+      required: [id, title, amount, currency, due_date, days_left]
+      properties:
+        id:
+          type: integer
+          title: ID периода
+        title:
+          type: string
+          title: Название платежа
+        amount:
+          type: string
+          title: Сумма
+        currency:
+          $ref: '#/components/schemas/Currency'
+        due_date:
+          type: string
+          format: date
+          title: Срок оплаты
+        days_left:
+          type: integer
+          title: Дней до срока
+    HTTPValidationError:
+      type: object
+      title: Ошибка валидации HTTP
+      properties:
+        detail:
+          type: array
+          title: Детали
+          items:
+            $ref: '#/components/schemas/ValidationError'
+    LoginRequest:
+      type: object
+      title: Запрос входа
+      required: [login, password]
+      properties:
+        login:
+          type: string
+          title: Логин
+        password:
+          type: string
+          title: Пароль
+    LoginResponse:
+      type: object
+      title: Ответ входа
+      required: [access_token, user]
+      properties:
+        access_token:
+          type: string
+          title: JWT
+        token_type:
+          type: string
+          title: Тип токена
+          default: bearer
+        user:
+          $ref: '#/components/schemas/UserOut'
+    PaymentOccurrenceOut:
+      type: object
+      title: Период оплаты
+      required: [id, recurring_payment_id, due_date, is_paid, paid_at, paid_by, created_at]
+      properties:
+        id:
+          type: integer
+          title: ID
+        recurring_payment_id:
+          type: integer
+          title: ID регулярного платежа
+        due_date:
+          type: string
+          format: date
+          title: Срок оплаты
+        is_paid:
+          type: boolean
+          title: Оплачен
+        paid_at:
+          anyOf:
+            - type: string
+              format: date
+            - type: 'null'
+          title: Дата фактической оплаты (алиас в ответе)
+        actual_payment_date:
+          anyOf:
+            - type: string
+              format: date
+            - type: 'null'
+          title: Фактическая дата оплаты (контракт фронта)
+        paid_by:
+          anyOf:
+            - type: integer
+            - type: 'null'
+          title: Кто отметил оплату
+        created_at:
+          type: string
+          format: date-time
+          title: Создан
+        title:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Название платежа
+        amount:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Сумма
+        currency:
+          anyOf:
+            - $ref: '#/components/schemas/Currency'
+            - type: 'null'
+        is_overdue:
+          type: boolean
+          title: Просрочен (вычисляемое)
+          default: false
+        days_left:
+          anyOf:
+            - type: integer
+            - type: 'null'
+          title: Дней до срока
+    PaymentOccurrencePatch:
+      type: object
+      title: Изменение периода
+      required: [is_paid]
+      properties:
+        is_paid:
+          type: boolean
+          title: Оплачен
+        actual_payment_date:
+          anyOf:
+            - type: string
+              format: date
+            - type: 'null'
+          title: Фактическая дата оплаты (рекомендуется для фронта)
+        paid_at:
+          anyOf:
+            - type: string
+              format: date
+            - type: 'null'
+          title: Алиас actual_payment_date
+    PaymentOccurrenceMinimal:
+      type: object
+      title: Период оплаты (контракт фронта)
+      required: [id, title, amount, currency, due_date, is_paid, actual_payment_date]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        amount:
+          type: string
+        currency:
+          $ref: '#/components/schemas/Currency'
+        due_date:
+          type: string
+          format: date
+        is_paid:
+          type: boolean
+        actual_payment_date:
+          anyOf:
+            - type: string
+              format: date
+            - type: 'null'
+    PaymentsSummaryOut:
+      type: object
+      title: Сводка платежей
+      required: [period, by_currency]
+      properties:
+        period:
+          $ref: '#/components/schemas/PeriodRange'
+        by_currency:
+          type: object
+          title: По валютам
+          additionalProperties:
+            $ref: '#/components/schemas/CurrencySummary'
+    PeriodRange:
+      type: object
+      title: Период отчёта
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          format: date
+          title: С
+        to:
+          type: string
+          format: date
+          title: По
+    Periodicity:
+      type: string
+      enum: [monthly]
+      title: Периодичность
+    RecurringPaymentCreate:
+      type: object
+      title: Создание регулярного платежа
+      required: [title, amount, currency, next_payment_date]
+      properties:
+        title:
+          type: string
+          maxLength: 255
+          title: Название
+        amount:
+          anyOf:
+            - type: number
+            - type: string
+          title: Сумма (> 0)
+        currency:
+          $ref: '#/components/schemas/Currency'
+        next_payment_date:
+          type: string
+          format: date
+          title: Дата ближайшего периода
+        periodicity:
+          $ref: '#/components/schemas/Periodicity'
+          default: monthly
+    RecurringPaymentOut:
+      type: object
+      title: Регулярный платёж
+      required: [id, title, amount, currency, periodicity, next_payment_date, is_active, created_at]
+      properties:
+        id:
+          type: integer
+          title: ID
+        title:
+          type: string
+          title: Название
+        amount:
+          type: string
+          title: Сумма
+        currency:
+          $ref: '#/components/schemas/Currency'
+        periodicity:
+          $ref: '#/components/schemas/Periodicity'
+        next_payment_date:
+          type: string
+          format: date
+          title: Следующий период
+        is_active:
+          type: boolean
+          title: Активен
+        created_at:
+          type: string
+          format: date-time
+          title: Создан
+    UserCreate:
+      type: object
+      title: Создание пользователя
+      required: [login, password]
+      properties:
+        login:
+          type: string
+          maxLength: 64
+          title: Логин
+        password:
+          type: string
+          title: Пароль
+        email:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Email
+        full_name:
+          anyOf:
+            - type: string
+              maxLength: 255
+            - type: 'null'
+          title: ФИО
+        role:
+          anyOf:
+            - $ref: '#/components/schemas/UserRole'
+            - type: 'null'
+          title: Роль (только user)
+    UserOut:
+      type: object
+      title: Пользователь
+      required: [id, login, email, full_name, role, is_active, created_at]
+      properties:
+        id:
+          type: integer
+          title: ID
+        login:
+          type: string
+          title: Логин
+        email:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Email
+        full_name:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: ФИО
+        role:
+          $ref: '#/components/schemas/UserRole'
+        is_active:
+          type: boolean
+          title: Активен
+        created_at:
+          type: string
+          format: date-time
+          title: Создан
+    UserRole:
+      type: string
+      enum: [admin, user]
+      title: Роль
+    UserUpdate:
+      type: object
+      title: Обновление пользователя
+      properties:
+        email:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Email
+        full_name:
+          anyOf:
+            - type: string
+              maxLength: 255
+            - type: 'null'
+          title: ФИО
+        password:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Новый пароль
+        is_active:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+          title: Активен
+        role:
+          anyOf:
+            - $ref: '#/components/schemas/UserRole'
+            - type: 'null'
+          title: Роль (нельзя менять)
+        login:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Логин (нельзя менять)
+    ValidationError:
+      type: object
+      title: Ошибка поля
+      required: [loc, msg, type]
+      properties:
+        loc:
+          type: array
+          title: Путь к полю
+          items:
+            anyOf:
+              - type: string
+              - type: integer
+        msg:
+          type: string
+          title: Сообщение
+        type:
+          type: string
+          title: Тип ошибки
+        input:
+          title: Входное значение
+        ctx:
+          type: object
+          title: Контекст
+  securitySchemes:
+    HTTPBearer:
+      type: http
+      scheme: bearer
+      description: JWT из ответа POST /api/v1/auth/login

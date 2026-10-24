@@ -1,0 +1,250 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-white text-gray-900 antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /*
+   * Long words / URLs / amounts must never push the layout wider than the
+   * screen. `clip` (unlike `hidden`) does not create a scroll container, so
+   * sticky headers keep working.
+   */
+  #root {
+    @apply max-w-full overflow-x-clip;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-blue-600 ring-offset-2;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-gray-200 bg-white;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-sm font-medium text-gray-700;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Dark theme                                                                  */
+/* -------------------------------------------------------------------------- */
+/*
+ * Pages use the light Tailwind palette. In dark mode the neutral classes are
+ * remapped here (selector `.dark .x` beats plain `.x`), including hover and
+ * disabled states, tinted status plates and form controls, so text never
+ * ends up on a background of the same tone.
+ *
+ * Palette (slate): page 950, surface 900, raised 800, border 700,
+ * muted text 400, body text 300/200, headings 100.
+ */
+
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+.dark *:focus-visible {
+  @apply ring-offset-slate-950;
+}
+
+/* Surfaces */
+.dark .card,
+.dark .bg-white {
+  @apply bg-slate-900;
+}
+
+.dark .card {
+  @apply border-slate-700;
+}
+
+.dark .bg-gray-50 {
+  @apply bg-slate-950;
+}
+
+/* Inside a card `bg-gray-50` (table header, modal footer) must stay distinct. */
+.dark .card .bg-gray-50,
+.dark [role='dialog'] .bg-gray-50 {
+  @apply bg-slate-800/60;
+}
+
+.dark .bg-gray-100 {
+  @apply bg-slate-800;
+}
+
+/* Text */
+.dark .text-gray-900 {
+  @apply text-slate-100;
+}
+
+.dark .text-gray-800 {
+  @apply text-slate-200;
+}
+
+.dark .text-gray-700 {
+  @apply text-slate-300;
+}
+
+.dark .text-gray-600,
+.dark .text-gray-500 {
+  @apply text-slate-400;
+}
+
+.dark .text-gray-400 {
+  @apply text-slate-500;
+}
+
+/* Borders / dividers */
+.dark .border-gray-300 {
+  @apply border-slate-600;
+}
+
+.dark .border-gray-200,
+.dark .border-gray-100 {
+  @apply border-slate-700;
+}
+
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+  @apply border-slate-700;
+}
+
+/* Hover / disabled states (light hover backgrounds used to swallow the text) */
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover {
+  @apply bg-slate-800;
+}
+
+.dark .hover\:text-gray-900:hover,
+.dark .hover\:text-gray-600:hover {
+  @apply text-slate-100;
+}
+
+.dark .hover\:bg-blue-50:hover {
+  @apply bg-blue-500/15;
+}
+
+.dark .hover\:bg-red-50:hover {
+  @apply bg-red-500/15;
+}
+
+.dark .disabled\:bg-gray-50:disabled {
+  @apply bg-slate-800;
+}
+
+.dark .disabled\:text-gray-400:disabled {
+  @apply text-slate-500;
+}
+
+.dark .disabled\:bg-blue-300:disabled {
+  @apply bg-blue-900 text-blue-300;
+}
+
+/* Form controls */
+.dark input,
+.dark select,
+.dark textarea {
+  @apply border-slate-600 bg-slate-900 text-slate-100;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  @apply text-slate-500;
+}
+
+.dark select option {
+  @apply bg-slate-900 text-slate-100;
+}
+
+.dark input[type='checkbox'] {
+  @apply border-slate-500 bg-slate-800;
+}
+
+/* Tinted status plates: badges, alerts, highlighted rows, active nav item */
+.dark .bg-blue-50,
+.dark .bg-blue-50\/60,
+.dark .bg-blue-50\/40 {
+  @apply bg-blue-500/15;
+}
+
+.dark .bg-green-50 {
+  @apply bg-green-500/15;
+}
+
+.dark .bg-yellow-50 {
+  @apply bg-yellow-500/15;
+}
+
+.dark .bg-red-50,
+.dark .bg-red-50\/60 {
+  @apply bg-red-500/15;
+}
+
+.dark .border-blue-200 {
+  @apply border-blue-500/40;
+}
+
+.dark .border-green-200 {
+  @apply border-green-500/40;
+}
+
+.dark .border-yellow-200 {
+  @apply border-yellow-500/40;
+}
+
+.dark .border-red-200,
+.dark .border-red-300 {
+  @apply border-red-500/50;
+}
+
+.dark .text-blue-700,
+.dark .text-blue-600 {
+  @apply text-blue-300;
+}
+
+.dark .text-green-700,
+.dark .text-green-800 {
+  @apply text-green-300;
+}
+
+.dark .text-yellow-700,
+.dark .text-yellow-800 {
+  @apply text-yellow-300;
+}
+
+.dark .text-red-600,
+.dark .text-red-700,
+.dark .text-red-800 {
+  @apply text-red-300;
+}
+
+/* Keep white text on solid accent buttons/tabs and the "today" calendar dot. */
+.dark .bg-blue-600,
+.dark .bg-blue-600 .text-blue-600,
+.dark .bg-blue-600.text-white {
+  color: #ffffff;
+}
+
+/* Progress-bar tracks and skeletons */
+.dark .animate-pulse.bg-gray-100,
+.dark .animate-pulse.bg-gray-50 {
+  @apply bg-slate-800;
+}
+
+/* Overlays */
+.dark .bg-gray-900\/40 {
+  @apply bg-black/60;
+}
