@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,9 @@ import (
 type Server struct {
 	Cfg config.Config
 	St  *store.Store
+	// Serialize occurrence transitions so duplicate callbacks cannot both
+	// generate the next occurrence from the same unpaid row.
+	occurrenceMu sync.Mutex
 }
 
 func NewRouter(cfg config.Config, st *store.Store) *gin.Engine {
@@ -114,7 +118,10 @@ func (s *Server) createNotification(c *gin.Context) {
 			return
 		}
 		assigned, err := s.St.PaymentAssignees(occurrence.RecurringPaymentID)
-		if err != nil { c.Status(http.StatusInternalServerError); return }
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
 		for _, id := range assigned {
 			target := id
 			if err := s.St.CreateNotification(&models.Notification{Type: body.Type, Title: body.Title, Message: body.Message, OccurrenceID: body.OccurrenceID, UserID: &target, Channel: body.Channel}); err != nil {
@@ -137,11 +144,18 @@ func (s *Server) listNotifications(c *gin.Context) {
 	pageSize, _ := strconvAtoi(c.DefaultQuery("page_size", "20"))
 	user, _ := currentUser(c)
 	var userID *int
-	if user.Role != "admin" { userID = &user.ID }
+	if user.Role != "admin" {
+		userID = &user.ID
+	}
 	items, total, err := s.St.ListNotifications(page, pageSize, c.Query("unread_only") == "true", userID)
-	if err != nil { c.Status(http.StatusInternalServerError); return }
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	out := make([]notificationOut, 0, len(items))
-	for _, item := range items { out = append(out, toNotificationOut(item)) }
+	for _, item := range items {
+		out = append(out, toNotificationOut(item))
+	}
 	c.JSON(http.StatusOK, gin.H{"items": out, "total": total, "page": page, "page_size": pageSize})
 }
 
@@ -149,16 +163,26 @@ func (s *Server) markNotificationRead(c *gin.Context) {
 	id, _ := strconvAtoi(c.Param("id"))
 	user, _ := currentUser(c)
 	var userID *int
-	if user.Role != "admin" { userID = &user.ID }
-	if err := s.St.MarkNotificationRead(id, userID); err != nil { c.Status(http.StatusInternalServerError); return }
+	if user.Role != "admin" {
+		userID = &user.ID
+	}
+	if err := s.St.MarkNotificationRead(id, userID); err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) markAllNotificationsRead(c *gin.Context) {
 	user, _ := currentUser(c)
 	var userID *int
-	if user.Role != "admin" { userID = &user.ID }
-	if err := s.St.MarkAllNotificationsRead(userID); err != nil { c.Status(http.StatusInternalServerError); return }
+	if user.Role != "admin" {
+		userID = &user.ID
+	}
+	if err := s.St.MarkAllNotificationsRead(userID); err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -211,7 +235,10 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	page, _ := strconvAtoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconvAtoi(c.DefaultQuery("page_size", "25"))
 	items, total, err := s.St.ListAuditLogs(page, pageSize, strings.TrimSpace(c.Query("action")))
-	if err != nil { c.Status(http.StatusInternalServerError); return }
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	out := make([]gin.H, 0, len(items))
 	for _, item := range items {
 		out = append(out, gin.H{
@@ -222,7 +249,6 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out, "total": total, "page": page, "page_size": pageSize})
 }
-
 
 func (s *Server) me(c *gin.Context) {
 	u, _ := currentUser(c)
@@ -389,7 +415,10 @@ func (s *Server) listRecurringPayments(c *gin.Context) {
 		filtered := items[:0]
 		for _, item := range items {
 			for _, assignedID := range item.AssignedUserIDs {
-				if assignedID == user.ID { filtered = append(filtered, item); break }
+				if assignedID == user.ID {
+					filtered = append(filtered, item)
+					break
+				}
 			}
 		}
 		items = filtered
@@ -438,10 +467,20 @@ func (s *Server) createRecurringPayment(c *gin.Context) {
 	assigned := body.AssignedUserIDs
 	if len(assigned) == 0 {
 		users, err := s.St.ListUsers()
-		if err != nil { c.Status(http.StatusInternalServerError); return }
-		for _, candidate := range users { if candidate.Role == "user" && candidate.IsActive { assigned = append(assigned, candidate.ID) } }
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		for _, candidate := range users {
+			if candidate.Role == "user" && candidate.IsActive {
+				assigned = append(assigned, candidate.ID)
+			}
+		}
 	}
-	if err := s.St.SetPaymentAssignees(p.ID, assigned); err != nil { c.Status(http.StatusInternalServerError); return }
+	if err := s.St.SetPaymentAssignees(p.ID, assigned); err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	p.AssignedUserIDs = assigned
 	occurrence, err := service.EnsureNextOccurrence(s.St, s.Cfg, p)
 	if err != nil {
@@ -452,7 +491,7 @@ func (s *Server) createRecurringPayment(c *gin.Context) {
 		data := notify.DueReminderData{
 			OccurrenceID: occurrence.ID, RecurringPaymentID: p.ID,
 			Title: p.Title, Amount: p.Amount.StringFixed(2), Currency: p.Currency,
-			DueDate: dates.FormatDate(occurrence.DueDate),
+			DueDate:  dates.FormatDate(occurrence.DueDate),
 			DaysLeft: dates.DaysLeft(occurrence.DueDate, s.Cfg.Timezone),
 		}
 		if err := notify.SendPaymentCreatedEmail(s.Cfg, data); err != nil {
@@ -461,7 +500,7 @@ func (s *Server) createRecurringPayment(c *gin.Context) {
 			occurrenceID := occurrence.ID
 			_ = s.St.CreateNotification(&models.Notification{
 				Type: "created", Title: "Email: создан платеж " + p.Title,
-				Message: p.Title + " — " + p.Amount.StringFixed(2) + " " + p.Currency + ", срок " + data.DueDate,
+				Message:      p.Title + " — " + p.Amount.StringFixed(2) + " " + p.Currency + ", срок " + data.DueDate,
 				OccurrenceID: &occurrenceID, UserID: &admin.ID, Channel: "email",
 			})
 		}
@@ -634,7 +673,9 @@ func (s *Server) listOccurrences(c *gin.Context) {
 	}
 	user, _ := currentUser(c)
 	var userID *int
-	if user.Role != "admin" { userID = &user.ID }
+	if user.Role != "admin" {
+		userID = &user.ID
+	}
 	rows, err := s.St.ListOccurrences(currency, rid, from, to, userID)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
@@ -715,6 +756,9 @@ func (s *Server) writeOccurrenceJSON(c *gin.Context, o *models.PaymentOccurrence
 }
 
 func (s *Server) patchOccurrence(c *gin.Context) {
+	s.occurrenceMu.Lock()
+	defer s.occurrenceMu.Unlock()
+
 	id, _ := strconvAtoi(c.Param("id"))
 	o, err := s.St.GetOccurrence(id)
 	if err != nil || o == nil || !s.userCanAccessOccurrence(c, o) {
@@ -722,9 +766,9 @@ func (s *Server) patchOccurrence(c *gin.Context) {
 		return
 	}
 	var body struct {
-		IsPaid              bool    `json:"is_paid"`
-		PaidAt              *string `json:"paid_at"`
-		ActualPaymentDate   *string `json:"actual_payment_date"`
+		IsPaid            bool    `json:"is_paid"`
+		PaidAt            *string `json:"paid_at"`
+		ActualPaymentDate *string `json:"actual_payment_date"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		writeAppError(c, apperr.ValidationError)
@@ -803,7 +847,9 @@ func (s *Server) patchOccurrence(c *gin.Context) {
 		})
 	}
 	details := "payment status changed"
-	if updated.Payment != nil { details = updated.Payment.Title }
+	if updated.Payment != nil {
+		details = updated.Payment.Title
+	}
 	_ = s.St.CreateAuditLog(&models.AuditLog{UserID: &user.ID, Action: map[bool]string{true: "mark_paid", false: "mark_unpaid"}[updated.IsPaid], Entity: "payment_occurrence", EntityID: &updated.ID, Details: details})
 	s.writeOccurrenceJSON(c, updated)
 }
@@ -811,7 +857,10 @@ func (s *Server) patchOccurrence(c *gin.Context) {
 func (s *Server) listBudgets(c *gin.Context) {
 	user, _ := currentUser(c)
 	budgets, err := s.St.GetBudgets(user.ID)
-	if err != nil { c.Status(http.StatusInternalServerError); return }
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	monthFrom, monthTo := dates.MonthBounds(s.Cfg.Timezone)
 	today := dates.TodayInTZ(s.Cfg.Timezone)
 	yearFrom := time.Date(today.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
@@ -822,17 +871,23 @@ func (s *Server) listBudgets(c *gin.Context) {
 		monthlyLimit, _ := decimal.NewFromString(limits[0])
 		yearlyLimit, _ := decimal.NewFromString(limits[1])
 		spentMonth, err := s.St.SumPaidOccurrences(user.ID, currency, monthFrom, monthTo)
-		if err != nil { c.Status(http.StatusInternalServerError); return }
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
 		spentYear, err := s.St.SumPaidOccurrences(user.ID, currency, yearFrom, yearTo)
-		if err != nil { c.Status(http.StatusInternalServerError); return }
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
 		out = append(out, gin.H{
-			"currency": currency,
-			"monthly_limit": monthlyLimit.StringFixed(2),
-			"yearly_limit": yearlyLimit.StringFixed(2),
-			"spent_month": spentMonth.StringFixed(2),
-			"spent_year": spentYear.StringFixed(2),
+			"currency":        currency,
+			"monthly_limit":   monthlyLimit.StringFixed(2),
+			"yearly_limit":    yearlyLimit.StringFixed(2),
+			"spent_month":     spentMonth.StringFixed(2),
+			"spent_year":      spentYear.StringFixed(2),
 			"remaining_month": decimal.Max(decimal.Zero, monthlyLimit.Sub(spentMonth)).StringFixed(2),
-			"remaining_year": decimal.Max(decimal.Zero, yearlyLimit.Sub(spentYear)).StringFixed(2),
+			"remaining_year":  decimal.Max(decimal.Zero, yearlyLimit.Sub(spentYear)).StringFixed(2),
 		})
 	}
 	c.JSON(http.StatusOK, out)
@@ -840,27 +895,45 @@ func (s *Server) listBudgets(c *gin.Context) {
 
 func (s *Server) updateBudget(c *gin.Context) {
 	currency := strings.ToUpper(strings.TrimSpace(c.Param("currency")))
-	if currency != "RUB" && currency != "USD" && currency != "EUR" { writeAppError(c, apperr.ValidationError); return }
-	var body struct { MonthlyLimit *decimal.Decimal `json:"monthly_limit"`; YearlyLimit *decimal.Decimal `json:"yearly_limit"` }
-	if err := c.ShouldBindJSON(&body); err != nil || body.MonthlyLimit == nil || body.YearlyLimit == nil || body.MonthlyLimit.IsNegative() || body.YearlyLimit.IsNegative() { writeAppError(c, apperr.ValidationError); return }
+	if currency != "RUB" && currency != "USD" && currency != "EUR" {
+		writeAppError(c, apperr.ValidationError)
+		return
+	}
+	var body struct {
+		MonthlyLimit *decimal.Decimal `json:"monthly_limit"`
+		YearlyLimit  *decimal.Decimal `json:"yearly_limit"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.MonthlyLimit == nil || body.YearlyLimit == nil || body.MonthlyLimit.IsNegative() || body.YearlyLimit.IsNegative() {
+		writeAppError(c, apperr.ValidationError)
+		return
+	}
 	user, _ := currentUser(c)
-	if err := s.St.UpsertBudget(user.ID, currency, body.MonthlyLimit.StringFixed(2), body.YearlyLimit.StringFixed(2)); err != nil { c.Status(http.StatusInternalServerError); return }
+	if err := s.St.UpsertBudget(user.ID, currency, body.MonthlyLimit.StringFixed(2), body.YearlyLimit.StringFixed(2)); err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	monthFrom, monthTo := dates.MonthBounds(s.Cfg.Timezone)
 	today := dates.TodayInTZ(s.Cfg.Timezone)
 	yearFrom := time.Date(today.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
 	yearTo := time.Date(today.Year(), time.December, 31, 0, 0, 0, 0, time.UTC)
 	spentMonth, err := s.St.SumPaidOccurrences(user.ID, currency, monthFrom, monthTo)
-	if err != nil { c.Status(http.StatusInternalServerError); return }
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	spentYear, err := s.St.SumPaidOccurrences(user.ID, currency, yearFrom, yearTo)
-	if err != nil { c.Status(http.StatusInternalServerError); return }
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"currency": currency,
-		"monthly_limit": body.MonthlyLimit.StringFixed(2),
-		"yearly_limit": body.YearlyLimit.StringFixed(2),
-		"spent_month": spentMonth.StringFixed(2),
-		"spent_year": spentYear.StringFixed(2),
+		"currency":        currency,
+		"monthly_limit":   body.MonthlyLimit.StringFixed(2),
+		"yearly_limit":    body.YearlyLimit.StringFixed(2),
+		"spent_month":     spentMonth.StringFixed(2),
+		"spent_year":      spentYear.StringFixed(2),
 		"remaining_month": decimal.Max(decimal.Zero, body.MonthlyLimit.Sub(spentMonth)).StringFixed(2),
-		"remaining_year": decimal.Max(decimal.Zero, body.YearlyLimit.Sub(spentYear)).StringFixed(2),
+		"remaining_year":  decimal.Max(decimal.Zero, body.YearlyLimit.Sub(spentYear)).StringFixed(2),
 	})
 }
 

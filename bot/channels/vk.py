@@ -36,7 +36,13 @@ class VKChannel:
         async with self._session.post(f"{VK_API}/{method}", data=params) as response:
             data = await response.json()
         if "error" in data:
-            raise RuntimeError(f"VK {method}: {data['error']}")
+            error = data["error"]
+            if method == "groups.getLongPollServer" and error.get("error_code") == 15:
+                raise RuntimeError(
+                    "VK group token has no access to groups.getLongPollServer; "
+                    "enable Bots Long Poll API and issue a group token with messages permissions"
+                )
+            raise RuntimeError(f"VK {method}: {error}")
         return data["response"]
 
     async def send_reminder(self, payment: PaymentOccurrence) -> bool:
@@ -51,24 +57,24 @@ class VKChannel:
         logger.info("[vk] reminder sent for occurrence %s", payment.id)
         return True
 
-    async def handle_payment_callback(self, occurrence_id: int, channel_user_id: str) -> PaymentOccurrence | None:
+    async def handle_payment_callback(self, occurrence_id: int, channel_user_id: str, target_paid: bool) -> PaymentOccurrence | None:
         try:
-            occurrence = await self.api_client.toggle_payment_status(occurrence_id)
+            occurrence = await self.api_client.update_payment_status(occurrence_id, target_paid, date.today())
             if occurrence.is_paid:
                 await self.store.clear_for_occurrence(occurrence_id)
             return occurrence
         except BackendAPIError:
-            logger.exception("[vk] failed to toggle occurrence %s", occurrence_id)
+            logger.exception("[vk] failed to set occurrence %s status", occurrence_id)
             return None
 
     @staticmethod
     def _keyboard(payment: PaymentOccurrence) -> str:
-        label = "✅ Оплачено" if payment.is_paid else "❌ Не оплачено"
+        label = "↩️ Вернуть в неоплаченное" if payment.is_paid else "✅ Отметить оплаченным"
         return json.dumps({"inline": True, "buttons": [[{
             "action": {
                 "type": "callback",
                 "label": label,
-                "payload": json.dumps({"occurrence_id": payment.id}),
+                "payload": json.dumps({"occurrence_id": payment.id, "target_paid": int(not payment.is_paid)}),
             }
         }]]}, ensure_ascii=False)
 
@@ -128,7 +134,8 @@ class VKChannel:
         try:
             occurrence_id = int(payload["occurrence_id"])
             user_id = str(obj.get("user_id", ""))
-            occurrence = await self.handle_payment_callback(occurrence_id, user_id)
+            target_paid = bool(int(payload.get("target_paid", 1)))
+            occurrence = await self.handle_payment_callback(occurrence_id, user_id, target_paid)
             if occurrence is not None:
                 await self._answer_event(
                     obj.get("event_id", ""),

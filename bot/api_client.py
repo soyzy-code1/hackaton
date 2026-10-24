@@ -93,13 +93,11 @@ class BackendAPIClient:
         return PaymentOccurrence.model_validate(raw)
 
     async def toggle_payment_status(self, occurrence_id: int) -> PaymentOccurrence:
-        raw = await self._request(
-            "GET",
-            f"/api/v1/payment-occurrences/{occurrence_id}",
-        )
+        """Legacy read-then-toggle helper retained for compatibility.
+
+        Interactive channels use explicit target states instead, preventing a
+        retried callback from reversing a completed action.
+        """
+        raw = await self._request("GET", f"/api/v1/payment-occurrences/{occurrence_id}")
         current = PaymentOccurrence.model_validate(raw)
-        return await self.update_payment_status(
-            occurrence_id,
-            not current.is_paid,
-            date.today(),
-        )
+        return await self.update_payment_status(occurrence_id, not current.is_paid, date.today())

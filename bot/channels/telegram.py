@@ -27,8 +27,8 @@ def build_qr_png(payment: PaymentOccurrence) -> bytes:
 PAY_PREFIX = "pay:"
 
 
-def build_pay_callback_data(occurrence_id: int) -> str:
-    return f"{PAY_PREFIX}{occurrence_id}"
+def build_pay_callback_data(occurrence_id: int, target_paid: bool) -> str:
+    return f"{PAY_PREFIX}{occurrence_id}:{int(target_paid)}"
 
 
 class TelegramChannel:
@@ -56,11 +56,11 @@ class TelegramChannel:
         logger.info("[telegram] reminder sent for occurrence %s", payment.id)
         return True
 
-    async def handle_payment_callback(self, occurrence_id: int, channel_user_id: str) -> PaymentOccurrence | None:
+    async def handle_payment_callback(self, occurrence_id: int, channel_user_id: str, target_paid: bool) -> PaymentOccurrence | None:
         try:
-            occurrence = await self.api_client.toggle_payment_status(occurrence_id)
+            occurrence = await self.api_client.update_payment_status(occurrence_id, target_paid, date.today())
         except BackendAPIError:
-            logger.exception("[telegram] failed to toggle occurrence %s", occurrence_id)
+            logger.exception("[telegram] failed to set occurrence %s status", occurrence_id)
             return None
         if occurrence.is_paid:
             await self.store.clear_for_occurrence(occurrence_id)
@@ -68,9 +68,9 @@ class TelegramChannel:
 
     @staticmethod
     def _keyboard(payment: PaymentOccurrence) -> InlineKeyboardMarkup:
-        label = "✅ Оплачено" if payment.is_paid else "❌ Не оплачено"
+        label = "↩️ Вернуть в неоплаченное" if payment.is_paid else "✅ Отметить оплаченным"
         return InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=label, callback_data=build_pay_callback_data(payment.id))
+            InlineKeyboardButton(text=label, callback_data=build_pay_callback_data(payment.id, not payment.is_paid))
         ]])
 
     @staticmethod
@@ -83,11 +83,13 @@ class TelegramChannel:
 
     async def _callback(self, callback: CallbackQuery) -> None:
         try:
-            occurrence_id = int((callback.data or "")[len(PAY_PREFIX):])
+            parts = (callback.data or "")[len(PAY_PREFIX):].split(":")
+            occurrence_id = int(parts[0])
+            target_paid = len(parts) == 1 or parts[1] == "1"
         except (TypeError, ValueError):
             await callback.answer("Некорректные данные кнопки.", show_alert=True)
             return
-        occurrence = await self.handle_payment_callback(occurrence_id, str(callback.from_user.id))
+        occurrence = await self.handle_payment_callback(occurrence_id, str(callback.from_user.id), target_paid)
         if occurrence is not None:
             if callback.message:
                 try:

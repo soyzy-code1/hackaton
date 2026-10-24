@@ -1,0 +1,86 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - mainn
+  workflow_dispatch:
+
+concurrency:
+  group: invoice-keeper-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Go tests
+        working-directory: backend
+        run: go test ./...
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Python syntax check
+        run: python -m compileall -q bot
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Create source archive
+        run: git archive --format=tar.gz --output=invoice-keeper.tar.gz HEAD
+
+      - name: Upload and deploy
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          scp invoice-keeper.tar.gz "$VPS_USER@$VPS_HOST:/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz"
+          ssh "$VPS_USER@$VPS_HOST" "set -e; mkdir -p '$VPS_PATH'; tar -xzf '/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz' -C '$VPS_PATH'; rm -f '/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz'; cd '$VPS_PATH'; test -f .env; test -f bot/.env; chmod 600 .env bot/.env; docker compose config --quiet; docker compose up -d --build; docker compose ps"
+
+      - name: Production smoke test
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "http://$VPS_HOST/healthz" || true)
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "Production healthcheck failed"
+          exit 1
