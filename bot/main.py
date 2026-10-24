@@ -22,7 +22,7 @@ def setup_logging() -> None:
 
 
 async def run_telegram_polling(dispatcher: Dispatcher, bot: Bot) -> None:
-    """Keep Telegram polling alive: network failures are retried, never fatal."""
+    """Run exactly one polling consumer and stop on Telegram's conflict response."""
     logger = logging.getLogger("channel.telegram")
     delay = 5
     while True:
@@ -36,6 +36,12 @@ async def run_telegram_polling(dispatcher: Dispatcher, bot: Bot) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if "Conflict: terminated by other getUpdates request" in str(exc):
+                logger.critical(
+                    "[telegram] polling stopped: another process is using this bot token. "
+                    "Stop every other bot instance/local polling process before restarting this container."
+                )
+                return
             logger.error(
                 "[telegram] api.telegram.org unavailable (%s). Retry in %ss. "
                 "If Telegram is blocked in your network, set TELEGRAM_PROXY or TELEGRAM_API_URL in .env.",

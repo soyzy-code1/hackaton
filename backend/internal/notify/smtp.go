@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"strings"
@@ -62,14 +63,22 @@ func BuildReceiptQR(data DueReminderData) ([]byte, error) {
 }
 
 func sendMail(cfg config.Config, subject, body string, attachments ...[]byte) error {
-	from := cfg.SMTPFrom
+	from := strings.TrimSpace(cfg.SMTPFrom)
+	user := strings.TrimSpace(cfg.SMTPUser)
 	if from == "" {
-		from = cfg.SMTPUser
+		from = user
+	}
+	recipients := splitRecipients(cfg.SMTPTo)
+	if len(recipients) == 0 {
+		return fmt.Errorf("smtp: no recipients configured")
+	}
+	if from == "" || user == "" {
+		return fmt.Errorf("smtp: sender and SMTP user must be configured")
 	}
 	port := cfg.SMTPPort
 	message := gomail.NewMessage()
 	message.SetHeader("From", from)
-	message.SetHeader("To", splitRecipients(cfg.SMTPTo)...)
+	message.SetHeader("To", recipients...)
 	message.SetHeader("Subject", subject)
 	message.SetBody("text/plain", body)
 	for _, attachment := range attachments {
@@ -79,16 +88,20 @@ func sendMail(cfg config.Config, subject, body string, attachments ...[]byte) er
 		}))
 	}
 
-	dialer := gomail.NewDialer(cfg.SMTPHost, port, cfg.SMTPUser, cfg.SMTPPassword)
+	dialer := gomail.NewDialer(cfg.SMTPHost, port, user, cfg.SMTPPassword)
+	// Mail.ru uses implicit TLS on 465 and STARTTLS on 587. Explicitly set the
+	// mode so a non-default port cannot accidentally downgrade the connection.
+	dialer.SSL = port == 465
+	dialer.TLSConfig = &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
 	if err := dialer.DialAndSend(message); err != nil {
-		return fmt.Errorf("smtp: send to %s: %w", cfg.SMTPTo, err)
+		return fmt.Errorf("smtp: send host=%s port=%d from=%s recipients=%d: %w", cfg.SMTPHost, port, from, len(recipients), err)
 	}
 	return nil
 }
 
 func splitRecipients(s string) []string {
 	var out []string
-	for _, part := range strings.Split(s, ",") {
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ';' }) {
 		part = strings.TrimSpace(part)
 		if part != "" {
 			out = append(out, part)

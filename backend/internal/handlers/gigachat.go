@@ -34,6 +34,24 @@ type gigaCompletionResponse struct {
 	} `json:"choices"`
 }
 
+const invoiceKeeperSystemPrompt = `Ты — встроенный русскоязычный ассистент приложения Invoice Keeper для учёта регулярных платежей.
+
+Твоя задача — понятно объяснять возможности приложения и подсказывать пользователю, как ими пользоваться. Invoice Keeper умеет:
+- создавать регулярные платежи с названием, суммой, валютой, датой следующей оплаты и периодичностью;
+- автоматически создавать отдельные периоды (occurrences) платежей;
+- показывать неоплаченные, оплаченные и просроченные платежи на Dashboard и в календаре;
+- отмечать платежи оплаченными или возвращать их в неоплаченные;
+- отправлять напоминания через Telegram, VK и email, включая QR-код чека;
+- настраивать месячные и годовые бюджеты, а также смотреть сводку, аналитику и динамику расходов;
+- импортировать регулярные платежи из CSV;
+- назначать платежи конкретным пользователям, чтобы доступ и уведомления были персональными;
+- поддерживать роли администратора и пользователя;
+- хранить уведомления и журнал аудита действий;
+- предоставлять кнопки статуса платежа в Telegram;
+- отвечать на вопросы об использовании самого приложения через этот раздел «Помощь ИИ».
+
+Отвечай по-русски, кратко и практично. Если вопрос связан с приложением, объясняй, какую функцию открыть и какие действия выполнить. Если пользователь спрашивает о платежах, бюджетах или уведомлениях, не утверждай конкретные данные, которых нет в сообщении: у тебя нет прямого доступа к аккаунту, базе и текущему Dashboard. Ясно разделяй общую инструкцию и данные пользователя. Не выдумывай функции, которых нет в описании, и при необходимости рекомендуй обратиться к администратору для настройки каналов, ролей или SMTP.`
+
 func (s *Server) chatWithGigaChat(c *gin.Context) {
 	if !s.Cfg.GigaChatConfigured() {
 		writeAppError(c, apperr.New(http.StatusServiceUnavailable, "GigaChat не настроен", "GIGACHAT_NOT_CONFIGURED"))
@@ -59,7 +77,7 @@ func (s *Server) chatWithGigaChat(c *gin.Context) {
 	payload := map[string]interface{}{
 		"model": s.Cfg.GigaChatModel,
 		"messages": []map[string]string{
-			{"role": "system", "content": "Ты полезный ассистент приложения Invoice Keeper. Отвечай по-русски кратко и понятно. Не выдумывай данные о платежах пользователя, если они не переданы в сообщении."},
+			{"role": "system", "content": invoiceKeeperSystemPrompt},
 			{"role": "user", "content": body.Message},
 		},
 		"temperature": 0.3,
@@ -90,16 +108,24 @@ func (s *Server) gigaChatToken() (string, error) {
 	form := url.Values{}
 	form.Set("scope", s.Cfg.GigaChatScope)
 	req, err := http.NewRequest(http.MethodPost, s.Cfg.GigaChatAuthURL, strings.NewReader(form.Encode()))
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	req.Header.Set("Authorization", "Basic "+s.Cfg.GigaChatCredentials)
 	req.Header.Set("RqUID", uuid.NewString())
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := s.gigaHTTPClient().Do(req)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return "", fmt.Errorf("oauth status %d", resp.StatusCode) }
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("oauth status %d", resp.StatusCode)
+	}
 	var token gigaTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil || token.AccessToken == "" { return "", fmt.Errorf("invalid oauth response") }
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil || token.AccessToken == "" {
+		return "", fmt.Errorf("invalid oauth response")
+	}
 	return token.AccessToken, nil
 }
 

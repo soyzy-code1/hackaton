@@ -59,8 +59,14 @@ class TelegramChannel:
     async def handle_payment_callback(self, occurrence_id: int, channel_user_id: str, target_paid: bool) -> PaymentOccurrence | None:
         try:
             occurrence = await self.api_client.update_payment_status(occurrence_id, target_paid, date.today())
-        except BackendAPIError:
-            logger.exception("[telegram] failed to set occurrence %s status", occurrence_id)
+        except BackendAPIError as exc:
+            logger.error(
+                "[telegram] failed to set occurrence %s target_paid=%s: %s",
+                occurrence_id,
+                target_paid,
+                exc,
+                exc_info=True,
+            )
             return None
         if occurrence.is_paid:
             await self.store.clear_for_occurrence(occurrence_id)
@@ -83,12 +89,22 @@ class TelegramChannel:
 
     async def _callback(self, callback: CallbackQuery) -> None:
         try:
-            parts = (callback.data or "")[len(PAY_PREFIX):].split(":")
+            data = callback.data or ""
+            parts = data[len(PAY_PREFIX):].split(":")
+            if len(parts) not in (1, 2) or (len(parts) == 2 and parts[1] not in {"0", "1"}):
+                raise ValueError("invalid callback state")
             occurrence_id = int(parts[0])
+            # Legacy pay:<id> buttons always meant "mark as paid".
             target_paid = len(parts) == 1 or parts[1] == "1"
         except (TypeError, ValueError):
             await callback.answer("Некорректные данные кнопки.", show_alert=True)
             return
+        logger.info(
+            "[telegram] callback received occurrence=%s target_paid=%s user=%s",
+            occurrence_id,
+            target_paid,
+            callback.from_user.id,
+        )
         occurrence = await self.handle_payment_callback(occurrence_id, str(callback.from_user.id), target_paid)
         if occurrence is not None:
             if callback.message:
