@@ -4,6 +4,12 @@
 # затем создаёт ровно один актуальный набор из RUB/USD/EUR.
 set -euo pipefail
 
+# Seed-файл и JSON-payload'ы должны передаваться в UTF-8 без преобразования.
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SEED_DIR="$SCRIPT_DIR/seed"
 BASE="${BASE_URL:-http://localhost}"
 ADMIN_LOGIN="${ADMIN_LOGIN:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
@@ -58,8 +64,8 @@ for item in data if isinstance(data,list) else data.get("items",[]):
 
 echo "== login =="
 LOGIN_RESPONSE="$(curl -fsS -X POST "$BASE/api/v1/auth/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"login\":\"$ADMIN_LOGIN\",\"password\":\"$ADMIN_PASSWORD\"}")"
+  -H "Content-Type: application/json; charset=utf-8" \
+  --data-binary "{\"login\":\"$ADMIN_LOGIN\",\"password\":\"$ADMIN_PASSWORD\"}")"
 TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | json_value access_token)"
 if [ -z "$TOKEN" ]; then
   echo "LOGIN FAILED: access_token отсутствует" >&2
@@ -98,18 +104,20 @@ echo "legacy demo payments deleted: $LEGACY_DELETED"
 
 echo "due date: $DUE"
 create_payment() {
-  local title="$1" amount="$2" currency="$3"
-  local response
+  local currency="$1" payload_file="$SEED_DIR/$2" tmp_file response
+  tmp_file="$(mktemp)"
+  trap 'rm -f "$tmp_file"' RETURN
+  sed "s/__DUE__/$DUE/g" "$payload_file" > "$tmp_file"
   response="$(curl -fsS -X POST "$BASE/api/v1/recurring-payments" \
     -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"title\":\"[DEMO] $title\",\"amount\":$amount,\"currency\":\"$currency\",\"next_payment_date\":\"$DUE\",\"periodicity\":\"monthly\"}")"
+    -H "Content-Type: application/json; charset=utf-8" \
+    --data-binary "@$tmp_file")"
   echo "$currency: OK id=$(printf '%s' "$response" | json_value id)"
 }
 
-create_payment "Аренда офиса" 50000 RUB
-create_payment "Сервер VPS" 20 USD
-create_payment "Подписка Figma" 15 EUR
+create_payment RUB rub.json
+create_payment USD usd.json
+create_payment EUR eur.json
 
 echo "== active demo payments =="
 FINAL="$(curl -fsS "$BASE/api/v1/recurring-payments?is_active=true" \

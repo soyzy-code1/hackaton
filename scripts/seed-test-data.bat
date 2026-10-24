@@ -32,9 +32,9 @@ for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$d=Get-Conten
 )
 
 echo due date: %DUE%
-call :create "[DEMO] Rental office" 50000 RUB
-call :create "[DEMO] VPS server" 20 USD
-call :create "[DEMO] Figma subscription" 15 EUR
+call :create rub.json RUB
+call :create usd.json USD
+call :create eur.json EUR
 
 set "FINAL_FILE=%TEMP%\invoice-keeper-final.json"
 curl.exe -sS -f "%BASE_URL%/api/v1/recurring-payments?is_active=true" -H "Authorization: Bearer %TOKEN%" -o "%FINAL_FILE%"
@@ -52,10 +52,12 @@ echo seed: OK
 exit /b 0
 
 :create
-set "TITLE=%~1"
-set "AMOUNT=%~2"
-set "CURRENCY=%~3"
-for /f "usebackq delims=" %%R in (`powershell -NoProfile -Command "$payload = @{title=$env:TITLE; amount=[decimal]$env:AMOUNT; currency=$env:CURRENCY; next_payment_date=$env:DUE; periodicity='monthly'} ^| ConvertTo-Json -Compress; curl.exe -sS -f -X POST '%BASE_URL%/api/v1/recurring-payments' -H 'Authorization: Bearer %TOKEN%' -H 'Content-Type: application/json' -d $payload"`) do set "RESPONSE=%%R"
+set "PAYLOAD_NAME=%~1"
+set "CURRENCY=%~2"
+set "PAYLOAD_FILE=%TEMP%\invoice-keeper-%CURRENCY%.json"
+powershell -NoProfile -Command "$raw = Get-Content -Raw -Encoding UTF8 -LiteralPath 'scripts/seed/%PAYLOAD_NAME%'; $raw.Replace('__DUE__', $env:DUE) | Set-Content -Encoding UTF8 -NoNewline -LiteralPath $env:PAYLOAD_FILE"
+if errorlevel 1 exit /b 1
+curl.exe -sS -f -X POST "%BASE_URL%/api/v1/recurring-payments" -H "Authorization: Bearer %TOKEN%" -H "Content-Type: application/json; charset=utf-8" --data-binary "@%PAYLOAD_FILE%" >NUL
 if errorlevel 1 exit /b 1
 echo %CURRENCY%: OK
 exit /b 0
