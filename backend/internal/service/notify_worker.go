@@ -44,6 +44,7 @@ func runNotifyCycle(cfg config.Config, st *store.Store) {
 		if err != nil {
 			log.Printf("notify: email list: %v", err)
 		} else {
+			log.Printf("notify: found %d items for email", len(items))
 			for _, o := range items {
 				if o.Payment == nil {
 					continue

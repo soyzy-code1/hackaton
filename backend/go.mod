@@ -4,6 +4,7 @@ go 1.25
 
 require (
 	github.com/gin-gonic/gin v1.10.0
+	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.2
