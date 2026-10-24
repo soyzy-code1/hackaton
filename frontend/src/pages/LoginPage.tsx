@@ -15,7 +15,7 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const token = useAuthStore((state) => state.token);
+  const user = useAuthStore((state) => state.user);
   const isInitializing = useAuthStore((state) => state.isInitializing);
   const isSubmitting = useAuthStore((state) => state.isSubmitting);
   const error = useAuthStore((state) => state.error);
@@ -31,7 +31,7 @@ export function LoginPage() {
     };
   }, [clearError]);
 
-  if (!isInitializing && token) {
+  if (!isInitializing && user) {
     return <Navigate to={state?.from ?? '/'} replace />;
   }
 

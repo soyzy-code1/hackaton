@@ -24,13 +24,31 @@ func writeAppError(c *gin.Context, e *apperr.AppError) {
 
 func authMiddleware(cfg config.Config, st *store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		h := c.GetHeader("Authorization")
 		token := ""
-		if h != "" && strings.HasPrefix(strings.ToLower(h), "bearer ") {
-			token = strings.TrimSpace(h[7:])
-		} else if cookie, err := c.Request.Cookie("invoice_keeper_token"); err == nil {
-			// Same-origin browser sessions may authenticate via the HttpOnly cookie.
+		if cookie, err := c.Request.Cookie("access_token"); err == nil {
+			// Browser sessions authenticate through the HttpOnly cookie.
 			token = strings.TrimSpace(cookie.Value)
+		}
+		if token == "" {
+			// Internal service clients use the dedicated header; this is not a browser JWT path.
+			token = strings.TrimSpace(c.GetHeader("X-Internal-Token"))
+		}
+		// Service-to-service access (notification bot): the shared internal token
+		// is accepted either in X-Internal-Token or as a Bearer token and acts on
+		// behalf of the bootstrap administrator account.
+		if cfg.InternalAPIToken != "" {
+			internal := strings.TrimSpace(c.GetHeader("X-Internal-Token"))
+			if internal == cfg.InternalAPIToken || token == cfg.InternalAPIToken {
+				user, err := st.GetUserByLogin(cfg.AdminLogin)
+				if err != nil || user == nil || !user.IsActive {
+					writeAppError(c, apperr.New(http.StatusUnauthorized, "Service user not found or inactive", "AUTH_REQUIRED"))
+					c.Abort()
+					return
+				}
+				c.Set(string(userKey), user)
+				c.Next()
+				return
+			}
 		}
 		if token == "" {
 			writeAppError(c, apperr.AuthRequired)
@@ -90,10 +108,7 @@ func currentUser(c *gin.Context) (*models.User, bool) {
 }
 
 func (s *Server) authTokenFromRequest(c *gin.Context) string {
-	if h := c.GetHeader("Authorization"); h != "" && strings.HasPrefix(strings.ToLower(h), "bearer ") {
-		return strings.TrimSpace(h[7:])
-	}
-	if cookie, err := c.Request.Cookie("invoice_keeper_token"); err == nil {
+	if cookie, err := c.Request.Cookie("access_token"); err == nil {
 		return strings.TrimSpace(cookie.Value)
 	}
 	return ""

@@ -34,6 +34,7 @@ type recurringPaymentOut struct {
 	Periodicity     string          `json:"periodicity"`
 	NextPaymentDate string          `json:"next_payment_date"`
 	IsActive        bool            `json:"is_active"`
+	AssignedUserIDs []int           `json:"assigned_user_ids"`
 	CreatedAt       time.Time       `json:"created_at"`
 }
 
@@ -41,7 +42,7 @@ func toPaymentOut(p *models.RecurringPayment) recurringPaymentOut {
 	return recurringPaymentOut{
 		ID: p.ID, Title: p.Title, Amount: p.Amount, Currency: p.Currency,
 		Periodicity: p.Periodicity, NextPaymentDate: dates.FormatDate(p.NextPaymentDate),
-		IsActive: p.IsActive, CreatedAt: p.CreatedAt,
+		IsActive: p.IsActive, AssignedUserIDs: p.AssignedUserIDs, CreatedAt: p.CreatedAt,
 	}
 }
 

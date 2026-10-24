@@ -124,7 +124,6 @@ export interface CsvImportPreview {
 }
 
 export interface LoginResponse {
-  token: string;
   user: User;
 }
 

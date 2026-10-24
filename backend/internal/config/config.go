@@ -35,7 +35,7 @@ type Config struct {
 func Load() Config {
 	smtpTo := getenv("SMTP_TO", "")
 	if smtpTo == "" {
-		smtpTo = getenv("ADMIN_EMAIL", "admin@example.com")
+		smtpTo = getenv("ADMIN_EMAIL", "antbkkahack@mail.ru")
 	}
 	return Config{
 		AppEnv:             getenv("APP_ENV", "dev"),
@@ -44,7 +44,7 @@ func Load() Config {
 		SessionTTLHours:    getenvInt("SESSION_TTL_HOURS", 24),
 		AdminLogin:         getenv("ADMIN_LOGIN", "admin"),
 		AdminPassword:      getenv("ADMIN_PASSWORD", "admin123"),
-		AdminEmail:         getenv("ADMIN_EMAIL", "admin@example.com"),
+		AdminEmail:         getenv("ADMIN_EMAIL", "antbkkahack@mail.ru"),
 		Timezone:           getenv("TIMEZONE", "Europe/Moscow"),
 		ReminderDaysBefore: getenvInt("REMINDER_DAYS_BEFORE", 3),
 		TelegramChatID:     getenv("TELEGRAM_CHAT_ID", ""),
@@ -65,7 +65,13 @@ func Load() Config {
 }
 
 func (c Config) SMTPConfigured() bool {
-	return c.SMTPEnabled && c.SMTPHost != "" && c.SMTPFrom != "" && c.SMTPTo != ""
+	return c.SMTPEnabled &&
+		c.SMTPHost != "" &&
+		c.SMTPPort > 0 &&
+		c.SMTPUser != "" &&
+		c.SMTPPassword != "" &&
+		c.SMTPFrom != "" &&
+		c.SMTPTo != ""
 }
 
 func (c Config) WebhookConfigured() bool {

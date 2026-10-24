@@ -1,5 +1,16 @@
 # Invoice Keeper — запуск окружения
 
+## Быстрая настройка своих Telegram-данных
+
+1. Скопируйте корневой [`.env.example`](.env.example) в `.env`.
+2. Создайте бота через [@BotFather](https://t.me/BotFather), вставьте токен в `BOT_TOKEN`.
+3. Добавьте бота в нужную группу, выдайте право отправлять сообщения и укажите реальный `TELEGRAM_CHAT_ID`.
+4. Если нужна кнопка в веб-интерфейсе, укажите публичную ссылку на бота в `VITE_TELEGRAM_BOT_URL` в [`frontend/.env.example`](frontend/.env.example).
+5. Для VK настройте `VK_GROUP_TOKEN`, `VK_GROUP_ID`, `VK_PEER_ID` в [`bot/.env.example`](bot/.env.example).
+6. После изменения `.env` пересоберите контейнеры: `docker compose up -d --build`.
+
+Токены не публикуйте в Git и не добавляйте в `VITE_*`: переменные `VITE_*` попадают в браузерный JavaScript.
+
 ## Windows без WSL
 
 На Windows без WSL и Git Bash используйте `.bat`-версии:

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
 	"invoicekeeper/internal/config"
 	"invoicekeeper/internal/dates"
+	"invoicekeeper/internal/models"
 	"invoicekeeper/internal/notify"
 	"invoicekeeper/internal/store"
 )
@@ -38,7 +40,13 @@ func StartNotifyWorker(ctx context.Context, cfg config.Config, st *store.Store) 
 func runNotifyCycle(cfg config.Config, st *store.Store) {
 	today := dates.TodayInTZ(cfg.Timezone)
 	horizon := cfg.ReminderDaysBefore
+	if !cfg.SMTPConfigured() && !cfg.WebhookConfigured() {
+		log.Printf("notify worker: no channels configured (SMTP_ENABLED=%t, SMTP_HOST=%q, SMTP_FROM=%q, SMTP_TO=%q)", cfg.SMTPEnabled, cfg.SMTPHost, cfg.SMTPFrom, cfg.SMTPTo)
+	}
 
+	if cfg.SMTPEnabled && !cfg.SMTPConfigured() {
+		log.Printf("notify: SMTP is enabled but incomplete; set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM and SMTP_TO")
+	}
 	if cfg.SMTPConfigured() {
 		items, err := st.ListDueForEmailReminder(today, horizon)
 		if err != nil {
@@ -62,6 +70,7 @@ func runNotifyCycle(cfg config.Config, st *store.Store) {
 					log.Printf("notify: email send error for occurrence %d: %v", o.ID, err)
 					continue
 				}
+				createAssignedNotifications(st, o, "reminder", "Email: "+data.Title, fmt.Sprintf("%s — %s %s, срок %s", data.Title, data.Amount, data.Currency, data.DueDate), "email")
 				if err := st.MarkEmailReminderSent(o.ID); err != nil {
 					log.Printf("notify: mark email sent %d: %v", o.ID, err)
 				}
@@ -78,6 +87,7 @@ func runNotifyCycle(cfg config.Config, st *store.Store) {
 				if o.Payment == nil {
 					continue
 				}
+				
 				data := notify.DueReminderData{
 					OccurrenceID:       o.ID,
 					RecurringPaymentID: o.RecurringPaymentID,
@@ -93,6 +103,23 @@ func runNotifyCycle(cfg config.Config, st *store.Store) {
 					}
 				}
 			}
+		}
+	}
+}
+
+func createAssignedNotifications(st *store.Store, occurrence models.PaymentOccurrence, notificationType, title, message, channel string) {
+	assigned, err := st.PaymentAssignees(occurrence.RecurringPaymentID)
+	if err != nil {
+		log.Printf("notify: load assignees for occurrence %d: %v", occurrence.ID, err)
+		return
+	}
+	for _, userID := range assigned {
+		target := userID
+		if err := st.CreateNotification(&models.Notification{
+			Type: notificationType, Title: title, Message: message,
+			OccurrenceID: &occurrence.ID, UserID: &target, Channel: channel,
+		}); err != nil {
+			log.Printf("notify: create notification for user %d: %v", userID, err)
 		}
 	}
 }

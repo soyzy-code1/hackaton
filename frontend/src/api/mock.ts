@@ -35,6 +35,11 @@ import type {
 
 /** Prefix used to build mock auth tokens; the user id follows it. */
 export const MOCK_TOKEN_PREFIX = 'mock-token:';
+let mockSessionUserId: string | null = null;
+
+export function getMockSessionUserId(): string | null {
+  return mockSessionUserId;
+}
 
 const ADMIN_USERNAME = import.meta.env.VITE_ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || 'admin';
@@ -382,6 +387,10 @@ export function mockResolveUser(token: string | null): MockUser | null {
   return users.find((user) => user.id === userId) ?? null;
 }
 
+export function mockLogout(): void {
+  mockSessionUserId = null;
+}
+
 /** Ids of all non-admin users — the default set of assignees. */
 function defaultAssigneeIds(): string[] {
   return users.filter((user) => user.role === 'user').map((user) => user.id);
@@ -394,15 +403,13 @@ function defaultAssigneeIds(): string[] {
 export function mockLogin(
   username: string,
   password: string,
-): { token: string; user: User } {
+): { user: User } {
   const user = users.find((u) => u.username === username && u.password === password);
   if (!user) {
     throw new Error('Неверный логин или пароль');
   }
-  return {
-    token: `${MOCK_TOKEN_PREFIX}${user.id}|${Date.now().toString(36)}`,
-    user: toPublicUser(user),
-  };
+  mockSessionUserId = user.id;
+  return { user: toPublicUser(user) };
 }
 
 /* -------------------------------------------------------------------------- */

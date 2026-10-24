@@ -27,9 +27,22 @@ type RecurringPayment struct {
 	NextPaymentDate time.Time
 	IsActive        bool
 	CreatedBy       int
+	AssignedUserIDs []int
 	CreatedAt       time.Time
 	UpdatedAt       *time.Time
 	DeletedAt       *time.Time
+}
+
+type Notification struct {
+	ID           int
+	Type         string
+	Title        string
+	Message      string
+	OccurrenceID *int
+	UserID       *int
+	Channel      string
+	IsRead       bool
+	CreatedAt    time.Time
 }
 
 type PaymentOccurrence struct {

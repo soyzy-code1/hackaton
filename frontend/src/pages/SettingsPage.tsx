@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bell, Moon, RotateCcw, Save, ShieldCheck, Sun } from 'lucide-react';
+import { useAuthStore } from '@/store/auth';
+import { Bell, ExternalLink, Moon, RotateCcw, Save, ShieldCheck, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -13,6 +14,7 @@ function timeZoneLabel(value: string): string {
 
 export function SettingsPage() {
   const settings = useSettingsStore();
+  const user = useAuthStore((state) => state.user);
   const [saved, setSaved] = useState(false);
   const selectedTimeZoneLabel = timeZoneLabel(settings.timeZone);
   const [timeZoneQuery, setTimeZoneQuery] = useState(selectedTimeZoneLabel);
@@ -44,6 +46,7 @@ export function SettingsPage() {
     <div className="space-y-6">
       <div><h1 className="text-xl font-semibold text-gray-900">Настройки</h1><p className="text-sm text-gray-500">Часовой пояс, напоминания и персональные предпочтения</p></div>
       <div className="grid gap-6 lg:grid-cols-2">
+        {user?.role === 'admin' ? <section className="card p-5"><div className="mb-5 flex items-center gap-2"><ExternalLink className="h-4 w-4 text-blue-600"/><h2 className="text-sm font-semibold text-gray-900">Telegram-беседа</h2></div><p className="mb-4 text-sm text-gray-500">Откройте беседу команды, чтобы получать напоминания и отмечать платежи как оплаченные.</p><a href={import.meta.env.VITE_TELEGRAM_BOT_URL || 'https://t.me/+iaxnNcL3atIxZmUy'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700">Открыть Telegram-беседу<ExternalLink className="h-4 w-4"/></a></section> : null}
         <section className="card p-5"><div className="mb-5 flex items-center gap-2"><Bell className="h-4 w-4 text-blue-600"/><h2 className="text-sm font-semibold text-gray-900">Уведомления</h2></div><div className="space-y-4"><Input label="Напоминать за (дней)" value={String(settings.reminderLeadDays)} onChange={(event) => settings.setSettings({ reminderLeadDays: Number(event.target.value) })}/><label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={settings.notificationsEnabled} onChange={(event) => settings.setSettings({ notificationsEnabled: event.target.checked })} className="h-4 w-4 text-blue-600"/>Включить уведомления</label><label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={settings.weeklyDigestEnabled} onChange={(event) => settings.setSettings({ weeklyDigestEnabled: event.target.checked })} className="h-4 w-4 text-blue-600"/>Еженедельный дайджест</label></div></section>
         <section className="card p-5"><div className="mb-5 flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-blue-600"/><h2 className="text-sm font-semibold text-gray-900">Региональные настройки</h2></div><div className="space-y-4">
           <div className="relative"><label className="field-label" htmlFor="timezone-input">Часовой пояс</label><input id="timezone-input" value={timeZoneQuery} title={settings.timeZone} onFocus={(event) => { event.target.select(); setShowTimeZoneSuggestions(true); }} onChange={(event) => { setTimeZoneQuery(event.target.value); setShowTimeZoneSuggestions(true); }} onBlur={() => setTimeout(() => { setShowTimeZoneSuggestions(false); setTimeZoneQuery(timeZoneLabel(useSettingsStore.getState().timeZone)); }, 150)} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="Начните вводить город, регион или UTC+3" autoComplete="off"/>{showTimeZoneSuggestions && timeZoneSuggestions.length > 0 && <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg">{timeZoneSuggestions.map((option) => <button type="button" key={option.value} onMouseDown={() => chooseTimeZone(option.value)} className={`block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-blue-50 ${option.value === settings.timeZone ? 'bg-blue-50' : ''}`}><span className="font-medium">{option.label}</span></button>)}</div>}</div>

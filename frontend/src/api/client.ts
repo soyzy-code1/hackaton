@@ -1,5 +1,6 @@
 import {
-  MOCK_TOKEN_PREFIX,
+  getMockSessionUserId,
+  mockLogout,
   mockCreateRecurringPayment,
   mockImportRecurringPayments,
   mockCreateUser,
@@ -43,7 +44,7 @@ const FORCE_MOCK = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === 'true
  * The mock backend is a development aid: in a production build the app talks
  * to the real API only, so a server outage surfaces as a normal error.
  */
-const MOCK_ENABLED = FORCE_MOCK || import.meta.env.DEV;
+const MOCK_ENABLED = FORCE_MOCK || Boolean(import.meta.env.DEV);
 
 /**
  * Header set by the Vite dev proxy when the upstream API cannot be reached.
@@ -74,13 +75,6 @@ function buildUrl(path: string, query?: Record<string, QueryValue>): string {
   }
   const qs = params.toString();
   return qs ? `${url}?${qs}` : url;
-}
-
-function getAuthToken(): string | null {
-  // JWT is persisted as a same-origin cookie; browser sends it automatically.
-  const prefix = 'invoice_keeper_token=';
-  const item = document.cookie.split('; ').find((value) => value.startsWith(prefix));
-  return item ? decodeURIComponent(item.slice(prefix.length)) : null;
 }
 
 /**
@@ -124,15 +118,12 @@ async function request<T>(
   init: RequestInit = {},
   query?: Record<string, QueryValue>,
 ): Promise<T> {
-  const token = getAuthToken();
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
   const requestInit: RequestInit = { ...init, headers, credentials: 'include' };
   if (init.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-
   let response: Response;
   try {
     response = await fetch(buildUrl(path, query), requestInit);
@@ -288,9 +279,6 @@ export const api = {
       withMock(
         async () => {
           const response = await request<{
-            access_token?: string;
-            token?: string;
-            token_type?: string;
             user: User | {
               id: number;
               login: string;
@@ -304,10 +292,7 @@ export const api = {
             method: 'POST',
             body: JSON.stringify(payload),
           });
-          // Backend returns access_token; mock/dev adapters use token.
-          // Normalize both contracts for the rest of the frontend.
-          const token = response.access_token ?? response.token;
-          if (!response || typeof token !== 'string' || !response.user) {
+          if (!response || !response.user) {
             throw new ApiError('Некорректный ответ сервера при авторизации', 500);
           }
           const rawUser = response.user;
@@ -318,7 +303,7 @@ export const api = {
                 username: rawUser.login,
                 role: rawUser.role,
               };
-          return { token, user };
+          return { user };
         },
         () => mockLogin(payload.username, payload.password),
       ),
@@ -334,11 +319,8 @@ export const api = {
           return user;
         },
         () => {
-          const token = getAuthToken();
-          const userId = token?.startsWith(MOCK_TOKEN_PREFIX)
-            ? token.slice(MOCK_TOKEN_PREFIX.length).split('|')[0]
-            : undefined;
-          const found = mockGetUsers().find((u) => u.id === userId) ?? mockGetUsers()[0];
+          const userId = getMockSessionUserId();
+          const found = mockGetUsers().find((u) => u.id === userId);
           if (!found) throw new ApiError('Пользователь не найден', 404);
           return found;
         },
@@ -350,6 +332,7 @@ export const api = {
       } catch {
         // Logging out locally must always succeed, even if the backend is down.
       }
+      mockLogout();
     },
   },
 
@@ -362,7 +345,7 @@ export const api = {
           });
           return normalizeList(response, normalizeRecurringPayment);
         },
-        () => mockGetRecurringPayments(mockResolveUser(getAuthToken())),
+        () => mockGetRecurringPayments(mockResolveUser(getMockSessionUserId())),
       ),
 
     update: async (id: string, payload: UpdateRecurringPaymentPayload): Promise<RecurringPayment> =>
@@ -442,7 +425,7 @@ export const api = {
           });
           return normalizeList(response, normalizeOccurrence);
         },
-        () => mockGetOccurrences(mockResolveUser(getAuthToken())),
+        () => mockGetOccurrences(mockResolveUser(getMockSessionUserId())),
       ),
 
     update: async (id: string, payload: UpdateOccurrencePayload): Promise<PaymentOccurrence> =>
@@ -462,7 +445,7 @@ export const api = {
           );
           return normalizeOccurrence(response);
         },
-        () => mockUpdateOccurrence(id, payload, mockResolveUser(getAuthToken())),
+        () => mockUpdateOccurrence(id, payload, mockResolveUser(getMockSessionUserId())),
       ),
   },
 
@@ -557,23 +540,53 @@ export const api = {
           };
           return { RUB: pick('RUB'), USD: pick('USD'), EUR: pick('EUR') };
         },
-        () => mockGetSummary(mockResolveUser(getAuthToken())),
+        () => mockGetSummary(mockResolveUser(getMockSessionUserId())),
       ),
   },
 
   budgets: {
-    /** Backend contract: `GET /budgets?as_of_date=` → `BudgetPlan[]`. */
     list: async (asOfDate?: string): Promise<BudgetPlan[]> =>
-      request<BudgetPlan[]>('/budgets', { method: 'GET' }, { as_of_date: asOfDate }),
-    /** Backend contract: `PUT /budgets/{currency}`. */
+      withMock(
+        async () => {
+          const response = await request<unknown>('/budgets', { method: 'GET' }, { as_of_date: asOfDate });
+          return normalizeList(response, (raw): BudgetPlan => {
+            const record = asRecord(raw);
+            return {
+              currency: asCurrency(record.currency),
+              monthly_limit: asNumber(record.monthly_limit),
+              yearly_limit: asNumber(record.yearly_limit),
+              spent_month: asNumber(record.spent_month),
+              spent_year: asNumber(record.spent_year),
+              remaining_month: asNumber(record.remaining_month),
+              remaining_year: asNumber(record.remaining_year),
+            };
+          });
+        },
+        () => [],
+      ),
     update: async (
       currency: Currency,
       payload: { monthly_limit?: number; yearly_limit?: number },
     ): Promise<BudgetPlan> =>
-      request<BudgetPlan>(`/budgets/${currency}`, {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      }),
+      withMock(
+        async () => {
+          const response = await request<unknown>(`/budgets/${currency}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          });
+          const record = asRecord(response);
+          return {
+            currency,
+            monthly_limit: asNumber(record.monthly_limit),
+            yearly_limit: asNumber(record.yearly_limit),
+            spent_month: asNumber(record.spent_month),
+            spent_year: asNumber(record.spent_year),
+            remaining_month: asNumber(record.remaining_month),
+            remaining_year: asNumber(record.remaining_year),
+          };
+        },
+        () => ({ currency, monthly_limit: payload.monthly_limit ?? 0, yearly_limit: payload.yearly_limit ?? 0, spent_month: 0, spent_year: 0, remaining_month: payload.monthly_limit ?? 0, remaining_year: payload.yearly_limit ?? 0 }),
+      ),
   },
 
   users: {

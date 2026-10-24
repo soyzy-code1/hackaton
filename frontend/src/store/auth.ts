@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { api, ApiError } from '@/api/client';
 import type { LoginPayload, User } from '@/api/types';
 
-const TOKEN_COOKIE_KEY = 'invoice_keeper_token';
 const USER_COOKIE_KEY = 'invoice_keeper_user';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24;
 
@@ -49,21 +48,20 @@ function readStoredUser(): User | null {
   }
 }
 
-function persistToken(token: string): void {
-  writeCookie(TOKEN_COOKIE_KEY, token);
-}
+// This is only a non-sensitive UI cache. The server-side `/auth/me` response
+// remains authoritative, but the cache prevents a transient API/proxy failure
+// during a reload from flashing the login page for an already signed-in user.
+const cachedUser = readStoredUser();
 
 function persistUser(user: User): void {
   writeCookie(USER_COOKIE_KEY, JSON.stringify(user));
 }
 
 export function clearSession(): void {
-  removeCookie(TOKEN_COOKIE_KEY);
   removeCookie(USER_COOKIE_KEY);
 }
 
 export interface AuthState {
-  token: string | null;
   user: User | null;
   /** True until the initial session restore / `me` request finishes. */
   isInitializing: boolean;
@@ -79,8 +77,7 @@ export interface AuthState {
 let restorePromise: Promise<void> | null = null;
 
 export const useAuthStore = create<AuthState>((set) => ({
-  token: readCookie(TOKEN_COOKIE_KEY),
-  user: readStoredUser(),
+  user: cachedUser,
   isInitializing: true,
   isSubmitting: false,
   error: null,
@@ -89,9 +86,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isSubmitting: true, error: null });
     try {
       const response = await api.auth.login(payload);
-      persistToken(response.token);
       persistUser(response.user);
-      set({ token: response.token, user: response.user, isSubmitting: false, error: null });
+      set({ user: response.user, isSubmitting: false, error: null });
       return true;
     } catch (error) {
       const message =
@@ -110,7 +106,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       await api.auth.logout();
     } finally {
       clearSession();
-      set({ token: null, user: null, error: null });
+      set({ user: null, error: null });
     }
   },
 
@@ -119,19 +115,23 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (restorePromise) return restorePromise;
 
     restorePromise = (async () => {
-      const token = readCookie(TOKEN_COOKIE_KEY);
-      if (!token) {
-        set({ token: null, user: null, isInitializing: false });
-        return;
-      }
       try {
         const user = await api.auth.me();
         persistUser(user);
-        set({ token, user, isInitializing: false, error: null });
-      } catch {
-        // An expired/invalid token must not block the app: drop the session.
-        clearSession();
-        set({ token: null, user: null, isInitializing: false, error: null });
+        set({ user, isInitializing: false, error: null });
+      } catch (error) {
+        // A 401/403 means the HttpOnly session is genuinely invalid. For
+        // network errors and temporary 5xx responses, keep the cached user so
+        // a reload does not incorrectly redirect an authenticated user to
+        // /login while the API is restarting or the proxy is reconnecting.
+        const isAuthFailure =
+          error instanceof ApiError && (error.status === 401 || error.status === 403);
+        if (isAuthFailure) {
+          clearSession();
+          set({ user: null, isInitializing: false, error: null });
+        } else {
+          set({ user: cachedUser, isInitializing: false, error: null });
+        }
       }
     })();
 

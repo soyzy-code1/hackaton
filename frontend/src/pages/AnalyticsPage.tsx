@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Download, TrendingUp } from 'lucide-react';
 import { api } from '@/api/client';
 import type { Currency, PaymentOccurrence } from '@/api/types';
@@ -16,12 +16,56 @@ import { Input } from '@/components/ui/Input';
 
 export function AnalyticsPage() {
   const occurrences = useAsyncResource<PaymentOccurrence[]>(() => api.occurrences.list(), []);
-  const budget = useSettingsStore((state) => state.budget);
-  const setBudget = useSettingsStore((state) => state.setBudget);
-  const yearlyBudget = useSettingsStore((state) => state.yearlyBudget);
-  const setYearlyBudget = useSettingsStore((state) => state.setYearlyBudget);
+  const localBudget = useSettingsStore((state) => state.budget);
+  const localYearlyBudget = useSettingsStore((state) => state.yearlyBudget);
+  const [budget, setBudgetState] = useState(localBudget);
+  const [yearlyBudget, setYearlyBudgetState] = useState(localYearlyBudget);
+  const [budgetSaving, setBudgetSaving] = useState(false);
+  const [budgetLoading, setBudgetLoading] = useState(true);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
+  const [budgetNotice, setBudgetNotice] = useState<string | null>(null);
   const timeZone = useSettingsStore((state) => state.timeZone);
   const [currency, setCurrency] = useState<Currency>('RUB');
+
+  useEffect(() => {
+    let cancelled = false;
+    setBudgetLoading(true);
+    void api.budgets.list()
+      .then((plans) => {
+        if (cancelled) return;
+        const monthly = { ...localBudget };
+        const yearly = { ...localYearlyBudget };
+        for (const plan of plans) {
+          monthly[plan.currency] = plan.monthly_limit;
+          yearly[plan.currency] = plan.yearly_limit;
+        }
+        setBudgetState(monthly);
+        setYearlyBudgetState(yearly);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setBudgetError(error instanceof Error ? error.message : 'Не удалось загрузить лимиты');
+      })
+      .finally(() => { if (!cancelled) setBudgetLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const updateBudget = async (nextMonthly: number, nextYearly: number) => {
+    const monthly = Math.max(0, nextMonthly);
+    const yearly = Math.max(0, nextYearly);
+    setBudgetState((value) => ({ ...value, [currency]: monthly }));
+    setYearlyBudgetState((value) => ({ ...value, [currency]: yearly }));
+    setBudgetSaving(true);
+    setBudgetError(null);
+    setBudgetNotice(null);
+    try {
+      await api.budgets.update(currency, { monthly_limit: monthly, yearly_limit: yearly });
+      setBudgetNotice('Лимит сохранён');
+    } catch (error) {
+      setBudgetError(error instanceof Error ? error.message : 'Не удалось сохранить лимит');
+    } finally {
+      setBudgetSaving(false);
+    }
+  };
 
   const rows = useMemo(() => occurrences.data ?? [], [occurrences.data]);
   const today = todayDateInputValue(timeZone);
@@ -87,8 +131,13 @@ export function AnalyticsPage() {
           <p className="mt-1 break-all text-xs text-gray-500">Осталось {formatAmount(current.remaining, currency)}</p>
         </div>
         <div className="card min-w-0 space-y-3 p-5 sm:col-span-2 lg:col-span-1">
-          <Input label="Бюджет / месяц" type="number" min="0" value={budget[currency]} onChange={(e) => setBudget(currency, Number(e.target.value))} />
-          <Input label="Бюджет / год" type="number" min="0" value={yearlyBudget[currency]} onChange={(e) => setYearlyBudget(currency, Number(e.target.value))} />
+          <Input label="Бюджет / месяц" type="number" min="0" value={budget[currency]} disabled={budgetLoading || budgetSaving} onChange={(e) => setBudgetState((value) => ({ ...value, [currency]: Number(e.target.value) }))} />
+          <Input label="Бюджет / год" type="number" min="0" value={yearlyBudget[currency]} disabled={budgetLoading || budgetSaving} onChange={(e) => setYearlyBudgetState((value) => ({ ...value, [currency]: Number(e.target.value) }))} />
+          <Button type="button" disabled={budgetLoading || budgetSaving} onClick={() => void updateBudget(budget[currency], yearlyBudget[currency])}>
+            {budgetSaving ? 'Сохранение…' : 'Сохранить лимиты'}
+          </Button>
+          {budgetError ? <p className="text-xs text-red-600">{budgetError}</p> : null}
+          {budgetNotice ? <p className="text-xs text-green-600">{budgetNotice}</p> : null}
         </div>
       </div>
 

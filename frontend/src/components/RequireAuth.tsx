@@ -26,14 +26,13 @@ function FullPageLoader() {
  * Users without access are redirected to the dashboard.
  */
 export function RequireAuth({ children, role }: RequireAuthProps) {
-  const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
   const isInitializing = useAuthStore((state) => state.isInitializing);
   const location = useLocation();
 
   if (isInitializing) return <FullPageLoader />;
 
-  if (!token || !user) {
+  if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 

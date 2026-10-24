@@ -1,27 +1,12 @@
-"""
-Local SQLite-backed storage used only for de-duplicating reminder
-notifications.
-
-The bot itself is a "thin client" and does NOT store payment data --
-all payment state lives in the backend. This module only tracks which
-(occurrence_id, due_date) pairs have already been notified about, so
-that a bot restart does not cause duplicate reminder messages to be
-sent for the same day.
-"""
+"""SQLite log preventing duplicate reminders per occurrence and channel."""
 
 import asyncio
-import logging
 import sqlite3
 from contextlib import closing
-from datetime import date
-
-logger = logging.getLogger(__name__)
+from datetime import datetime, timezone
 
 
 class NotificationStore:
-    """Tracks which payment occurrences have already been reminded about
-    for a given due date, backed by a local SQLite file."""
-
     def __init__(self, db_path: str):
         self._db_path = db_path
         self._lock = asyncio.Lock()
@@ -29,62 +14,45 @@ class NotificationStore:
 
     def _init_db(self) -> None:
         with closing(sqlite3.connect(self._db_path)) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sent_notifications (
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sent_log (
                     occurrence_id INTEGER NOT NULL,
-                    due_date TEXT NOT NULL,
+                    channel TEXT NOT NULL,
                     sent_at TEXT NOT NULL,
-                    PRIMARY KEY (occurrence_id, due_date)
+                    PRIMARY KEY (occurrence_id, channel)
                 )
-                """
-            )
+            """)
             conn.commit()
 
-    async def already_notified(self, occurrence_id: int, due_date: date) -> bool:
-        """Return True if a reminder for this occurrence/due_date was
-        already sent."""
+    async def already_notified(self, occurrence_id: int, channel: str) -> bool:
         async with self._lock:
-            return await asyncio.to_thread(
-                self._already_notified_sync, occurrence_id, due_date
-            )
+            return await asyncio.to_thread(self._already_sync, occurrence_id, channel)
 
-    def _already_notified_sync(self, occurrence_id: int, due_date: date) -> bool:
+    def _already_sync(self, occurrence_id: int, channel: str) -> bool:
         with closing(sqlite3.connect(self._db_path)) as conn:
-            cur = conn.execute(
-                "SELECT 1 FROM sent_notifications WHERE occurrence_id = ? AND due_date = ?",
-                (occurrence_id, due_date.isoformat()),
-            )
-            return cur.fetchone() is not None
+            row = conn.execute(
+                "SELECT 1 FROM sent_log WHERE occurrence_id = ? AND channel = ?",
+                (occurrence_id, channel),
+            ).fetchone()
+            return row is not None
 
-    async def mark_notified(self, occurrence_id: int, due_date: date) -> None:
-        """Record that a reminder for this occurrence/due_date was sent."""
+    async def mark_notified(self, occurrence_id: int, channel: str) -> None:
         async with self._lock:
-            await asyncio.to_thread(self._mark_notified_sync, occurrence_id, due_date)
+            await asyncio.to_thread(self._mark_sync, occurrence_id, channel)
 
-    def _mark_notified_sync(self, occurrence_id: int, due_date: date) -> None:
+    def _mark_sync(self, occurrence_id: int, channel: str) -> None:
         with closing(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
-                """
-                INSERT OR IGNORE INTO sent_notifications
-                    (occurrence_id, due_date, sent_at)
-                VALUES (?, ?, ?)
-                """,
-                (occurrence_id, due_date.isoformat(), date.today().isoformat()),
+                "INSERT OR IGNORE INTO sent_log (occurrence_id, channel, sent_at) VALUES (?, ?, ?)",
+                (occurrence_id, channel, datetime.now(timezone.utc).isoformat()),
             )
             conn.commit()
 
     async def clear_for_occurrence(self, occurrence_id: int) -> None:
-        """Remove all notification records for an occurrence, e.g. after
-        it has been marked as paid (so re-adding a similar one later
-        would not be silently suppressed by stale rows)."""
         async with self._lock:
-            await asyncio.to_thread(self._clear_for_occurrence_sync, occurrence_id)
+            await asyncio.to_thread(self._clear_sync, occurrence_id)
 
-    def _clear_for_occurrence_sync(self, occurrence_id: int) -> None:
+    def _clear_sync(self, occurrence_id: int) -> None:
         with closing(sqlite3.connect(self._db_path)) as conn:
-            conn.execute(
-                "DELETE FROM sent_notifications WHERE occurrence_id = ?",
-                (occurrence_id,),
-            )
+            conn.execute("DELETE FROM sent_log WHERE occurrence_id = ?", (occurrence_id,))
             conn.commit()

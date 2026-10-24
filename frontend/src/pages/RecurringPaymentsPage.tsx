@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { FileUp, Plus, Trash2 } from 'lucide-react';
-import { api } from '@/api/client';
+import { api, ApiError } from '@/api/client';
 import type { Currency, PaymentCategory, Periodicity, RecurringPayment, User } from '@/api/types';
 import { CURRENCIES, PAYMENT_CATEGORY_LABELS, PERIODICITIES, PERIODICITY_LABELS } from '@/api/types';
 import { useAsyncResource } from '@/hooks/useAsyncResource';
@@ -50,6 +50,7 @@ export function RecurringPaymentsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<'name' | 'amount' | 'nextPaymentDate', string>>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -67,6 +68,7 @@ export function RecurringPaymentsPage() {
   const openModal = () => {
     setForm(INITIAL_FORM);
     setFormError(null);
+    setFieldErrors({});
     setIsModalOpen(true);
   };
 
@@ -74,6 +76,7 @@ export function RecurringPaymentsPage() {
     if (isSaving) return;
     setIsModalOpen(false);
     setFormError(null);
+    setFieldErrors({});
   };
 
   const updateForm = <K extends keyof FormState>(key: K, value: FormState[K]) => {
@@ -83,18 +86,16 @@ export function RecurringPaymentsPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFormError(null);
+    setFieldErrors({});
 
     const amount = Number(form.amount);
-    if (!form.name.trim()) {
-      setFormError('Укажите название платежа');
-      return;
-    }
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setFormError('Укажите корректную сумму');
-      return;
-    }
-    if (!form.nextPaymentDate) {
-      setFormError('Укажите дату ближайшей оплаты');
+    const errors: Partial<Record<'name' | 'amount' | 'nextPaymentDate', string>> = {};
+    if (!form.name.trim()) errors.name = 'Укажите название платежа';
+    if (!Number.isFinite(amount) || amount <= 0) errors.amount = 'Укажите корректную сумму';
+    if (!form.nextPaymentDate) errors.nextPaymentDate = 'Укажите дату ближайшей оплаты';
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setFormError('Проверьте заполнение полей');
       return;
     }
 
@@ -115,7 +116,12 @@ export function RecurringPaymentsPage() {
       setIsModalOpen(false);
       setForm(INITIAL_FORM);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Не удалось создать платеж');
+      if (error instanceof ApiError && error.status === 422) {
+        console.error('Ошибка валидации платежа:', error.message);
+        setFormError('Проверьте заполнение полей');
+      } else {
+        setFormError(error instanceof Error ? error.message : 'Не удалось создать платеж');
+      }
     } finally {
       setIsSaving(false);
     }
@@ -288,6 +294,7 @@ export function RecurringPaymentsPage() {
             placeholder="Например, аренда офиса"
             value={form.name}
             onChange={(event) => updateForm('name', event.target.value)}
+            error={fieldErrors.name}
             disabled={isSaving}
           />
 
@@ -300,6 +307,7 @@ export function RecurringPaymentsPage() {
             placeholder="0.00"
             value={form.amount}
             onChange={(event) => updateForm('amount', event.target.value)}
+            error={fieldErrors.amount}
             disabled={isSaving}
           />
 
@@ -316,6 +324,7 @@ export function RecurringPaymentsPage() {
             type="date"
             value={form.nextPaymentDate}
             onChange={(event) => updateForm('nextPaymentDate', event.target.value)}
+            error={fieldErrors.nextPaymentDate}
             disabled={isSaving}
           />
 

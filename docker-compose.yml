@@ -110,6 +110,7 @@ services:
         FRONTEND_DIR: ${FRONTEND_DIR:-frontend}
         VITE_API_URL: ${VITE_API_URL:-/api/v1}
         VITE_USE_MOCK: ${VITE_USE_MOCK:-false}
+        VITE_TELEGRAM_BOT_URL: ${VITE_TELEGRAM_BOT_URL:-https://t.me/+iaxnNcL3atIxZmUy}
         VITE_ADMIN_USERNAME: ${ADMIN_LOGIN:-admin}
     image: invoice-keeper/frontend:local
     container_name: invoice_frontend
@@ -136,23 +137,30 @@ services:
     image: invoice-keeper/bot:local
     container_name: invoice_bot
     restart: unless-stopped
+    # bot/.env is intentionally loaded last so its real channel credentials are
+    # not overwritten by empty interpolation values from the root .env.
     env_file:
       - .env
+      - ./bot/.env
     environment:
-      BOT_TOKEN: ${BOT_TOKEN:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-change_me_internal_token}
       ADMIN_BASIC_AUTH_LOGIN: ${ADMIN_LOGIN:-admin}
       ADMIN_BASIC_AUTH_PASSWORD: ${ADMIN_PASSWORD:-change_me_admin_password}
-      TELEGRAM_PROXY: ${TELEGRAM_PROXY:-}
       TELEGRAM_PROXY_WORKER_HOST: ${TELEGRAM_PROXY_WORKER_HOST:-}
+      REMINDER_POLL_SECONDS: ${REMINDER_POLL_SECONDS:-60}
       TGWS_TIMEOUT: ${TGWS_TIMEOUT:-15}
       SQLITE_PATH: /app/data/notifications.db
       TZ: ${TIMEZONE:-Europe/Moscow}
+      TELEGRAM_POLLING_ENABLED: ${TELEGRAM_POLLING_ENABLED:-true}
     volumes:
       - botdata:/app/data
       - botdata:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      # The DNS address of api.telegram.org (149.154.166.110) is blocked by the ISP,
+      # while 149.154.167.220 (the same Bot API) is reachable directly.
+      - "api.telegram.org:${TELEGRAM_API_IP:-149.154.167.220}"
     depends_on:
       backend:
         condition: service_started

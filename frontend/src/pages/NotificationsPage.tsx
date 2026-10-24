@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Bell, BellOff, CheckCheck, Filter } from 'lucide-react';
 import { api } from '@/api/client';
-import type { Notification, PaginatedResponse } from '@/api/types';
+import type { Notification, PaginatedResponse, PaymentOccurrence } from '@/api/types';
 import { useAsyncResource } from '@/hooks/useAsyncResource';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -26,8 +26,28 @@ export function NotificationsPage() {
     () => api.notifications.list({ unread_only: unreadOnly, page: 1, page_size: 50 }),
     [unreadOnly],
   );
+  const occurrencesResource = useAsyncResource<PaymentOccurrence[]>(() => api.occurrences.list(), []);
   const page = resource.data ?? EMPTY_PAGE;
-  const items = Array.isArray(page.items) ? page.items : [];
+  const backendItems = Array.isArray(page.items) ? page.items : [];
+  const overdueItems = useMemo<Notification[]>(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return (occurrencesResource.data ?? [])
+      .filter((occurrence) => occurrence.status !== 'paid' && occurrence.due_date.slice(0, 10) < today)
+      .map((occurrence) => ({
+        id: `overdue-${occurrence.id}`,
+        type: 'overdue',
+        title: `Просрочена оплата: ${occurrence.name}`,
+        message: `Срок оплаты был ${new Date(`${occurrence.due_date.slice(0, 10)}T00:00:00`).toLocaleDateString('ru-RU')}. Сумма: ${occurrence.amount} ${occurrence.currency}.`,
+        occurrence_id: occurrence.id,
+        is_read: false,
+        created_at: occurrence.due_date,
+        channels: ['in_app'],
+      }));
+  }, [occurrencesResource.data]);
+  const items = useMemo(() => {
+    const merged = [...backendItems, ...overdueItems];
+    return unreadOnly ? merged.filter((item) => !item.is_read) : merged;
+  }, [backendItems, overdueItems, unreadOnly]);
   const unreadCount = useMemo(() => items.filter((item) => !item.is_read).length, [items]);
 
   const runAction = async (action: () => Promise<unknown>) => {
@@ -64,7 +84,7 @@ export function NotificationsPage() {
       ) : null}
 
       <div className="card overflow-hidden">
-        {resource.isLoading ? (
+        {resource.isLoading || occurrencesResource.isLoading ? (
           <div className="flex items-center justify-center gap-3 p-12 text-sm text-gray-500">
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
             Загрузка уведомлений…
@@ -101,7 +121,12 @@ export function NotificationsPage() {
                 </p>
               </div>
               {!item.is_read ? (
-                <Button className="self-end sm:self-start" size="sm" variant="ghost" onClick={() => void runAction(() => api.notifications.markRead(item.id))}>
+                <Button
+                  className="self-end sm:self-start"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void runAction(() => item.id.startsWith('overdue-') ? Promise.resolve() : api.notifications.markRead(item.id))}
+                >
                   Прочитано
                 </Button>
               ) : null}

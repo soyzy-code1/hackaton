@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '@/api/client';
-import type { Role, User } from '@/api/types';
+import type { User } from '@/api/types';
 import { ROLE_LABELS } from '@/api/types';
 import { useAsyncResource } from '@/hooks/useAsyncResource';
 import { useAuthStore } from '@/store/auth';
@@ -11,26 +11,18 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { Select } from '@/components/ui/Select';
 import { Table } from '@/components/ui/Table';
 import type { Column } from '@/components/ui/Table';
 
 interface UserFormState {
   username: string;
   password: string;
-  role: Role;
 }
 
 const INITIAL_FORM: UserFormState = {
   username: '',
   password: '',
-  role: 'user',
 };
-
-const ROLE_OPTIONS: { value: Role; label: string }[] = [
-  { value: 'user', label: ROLE_LABELS.user },
-  { value: 'admin', label: ROLE_LABELS.admin },
-];
 
 export function UsersPage() {
   const currentUser = useAuthStore((state) => state.user);
@@ -67,7 +59,7 @@ export function UsersPage() {
 
   const openEditModal = (user: User) => {
     setEditingUser(user);
-    setForm({ username: user.username, password: '', role: user.role });
+    setForm({ username: user.username, password: '' });
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -106,7 +98,6 @@ export function UsersPage() {
         const updated = await api.users.update(editingUser.id, {
           username: form.username.trim(),
           ...(form.password ? { password: form.password } : {}),
-          role: form.role,
         });
         users.setData(
           (users.data ?? []).map((user) => (user.id === updated.id ? updated : user)),
@@ -115,7 +106,6 @@ export function UsersPage() {
         const created = await api.users.create({
           username: form.username.trim(),
           password: form.password,
-          role: form.role,
         });
         users.setData([...(users.data ?? []), created]);
       }
@@ -256,14 +246,6 @@ export function UsersPage() {
             placeholder={editingUser ? 'Оставьте пустым, чтобы не менять' : 'Введите пароль'}
             value={form.password}
             onChange={(event) => updateForm('password', event.target.value)}
-            disabled={isSaving}
-          />
-
-          <Select
-            label="Роль"
-            options={ROLE_OPTIONS}
-            value={form.role}
-            onChange={(event) => updateForm('role', event.target.value as Role)}
             disabled={isSaving}
           />
 

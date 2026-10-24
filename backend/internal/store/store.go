@@ -98,13 +98,22 @@ func (s *Store) ListRecurringPayments(currency *string, isActive *bool) ([]model
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPayments(rows)
+	payments, err := scanPayments(rows)
+	if err != nil { return nil, err }
+	for i := range payments {
+		payments[i].AssignedUserIDs, err = s.PaymentAssignees(payments[i].ID)
+		if err != nil { return nil, err }
+	}
+	return payments, nil
 }
 
 func (s *Store) GetRecurringPayment(id int) (*models.RecurringPayment, error) {
 	row := s.DB.QueryRow(`SELECT id, title, amount, currency, periodicity, next_payment_date, is_active, created_by, created_at, updated_at, deleted_at
 		FROM recurring_payments WHERE id = ?`, id)
-	return scanPayment(row)
+	p, err := scanPayment(row)
+	if err != nil { return nil, err }
+	p.AssignedUserIDs, err = s.PaymentAssignees(id)
+	return p, err
 }
 
 func (s *Store) CreateRecurringPayment(p *models.RecurringPayment) error {
@@ -117,6 +126,49 @@ func (s *Store) CreateRecurringPayment(p *models.RecurringPayment) error {
 	id, _ := res.LastInsertId()
 	p.ID = int(id)
 	return s.refreshPayment(p)
+}
+
+func (s *Store) SetPaymentAssignees(paymentID int, userIDs []int) error {
+	tx, err := s.DB.Begin()
+	if err != nil { return err }
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM recurring_payment_users WHERE recurring_payment_id = ?`, paymentID); err != nil { return err }
+	for _, userID := range userIDs {
+		if _, err = tx.Exec(`INSERT OR IGNORE INTO recurring_payment_users (recurring_payment_id, user_id) VALUES (?, ?)`, paymentID, userID); err != nil { return err }
+	}
+	return tx.Commit()
+}
+
+func (s *Store) PaymentAssignees(paymentID int) ([]int, error) {
+	rows, err := s.DB.Query(`SELECT user_id FROM recurring_payment_users WHERE recurring_payment_id = ? ORDER BY user_id`, paymentID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil { return nil, err }
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Store) GetBudgets(userID int) (map[string][2]string, error) {
+	rows, err := s.DB.Query(`SELECT currency, monthly_limit, yearly_limit FROM user_budgets WHERE user_id = ?`, userID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	out := make(map[string][2]string)
+	for rows.Next() {
+		var currency, monthly, yearly string
+		if err := rows.Scan(&currency, &monthly, &yearly); err != nil { return nil, err }
+		out[currency] = [2]string{monthly, yearly}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpsertBudget(userID int, currency, monthly, yearly string) error {
+	_, err := s.DB.Exec(`INSERT INTO user_budgets (user_id, currency, monthly_limit, yearly_limit) VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id, currency) DO UPDATE SET monthly_limit=excluded.monthly_limit, yearly_limit=excluded.yearly_limit, updated_at=CURRENT_TIMESTAMP`, userID, currency, monthly, yearly)
+	return err
 }
 
 func (s *Store) UpdateRecurringPayment(p *models.RecurringPayment) error {
@@ -142,7 +194,13 @@ func (s *Store) ListActivePaymentsForLazy() ([]models.RecurringPayment, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPayments(rows)
+	payments, err := scanPayments(rows)
+	if err != nil { return nil, err }
+	for i := range payments {
+		payments[i].AssignedUserIDs, err = s.PaymentAssignees(payments[i].ID)
+		if err != nil { return nil, err }
+	}
+	return payments, nil
 }
 
 func (s *Store) LastOccurrence(paymentID int) (*models.PaymentOccurrence, error) {
@@ -180,7 +238,7 @@ func (s *Store) GetOccurrence(id int) (*models.PaymentOccurrence, error) {
 	return scanOccurrenceWithPayment(row)
 }
 
-func (s *Store) ListOccurrences(currency *string, recurringID *int, from, to *time.Time) ([]models.PaymentOccurrence, error) {
+func (s *Store) ListOccurrences(currency *string, recurringID *int, from, to *time.Time, userID *int) ([]models.PaymentOccurrence, error) {
 	q := `SELECT ` + occSelectCols + `,
 		p.id, p.title, p.amount, p.currency, p.periodicity, p.next_payment_date, p.is_active, p.created_by, p.created_at, p.updated_at, p.deleted_at
 		FROM payment_occurrences o
@@ -202,6 +260,10 @@ func (s *Store) ListOccurrences(currency *string, recurringID *int, from, to *ti
 		q += ` AND o.due_date <= ?`
 		args = append(args, formatDate(*to))
 	}
+	if userID != nil {
+		q += ` AND EXISTS (SELECT 1 FROM recurring_payment_users rpu WHERE rpu.recurring_payment_id = p.id AND rpu.user_id = ?)`
+		args = append(args, *userID)
+	}
 	q += ` ORDER BY o.due_date, o.id`
 	rows, err := s.DB.Query(q, args...)
 	if err != nil {
@@ -219,13 +281,18 @@ func (s *Store) ListOccurrences(currency *string, recurringID *int, from, to *ti
 	return out, rows.Err()
 }
 
-func (s *Store) ListOccurrencesForSummary(from, to time.Time) ([]models.PaymentOccurrence, error) {
-	rows, err := s.DB.Query(`SELECT `+occSelectCols+`,
+func (s *Store) ListOccurrencesForSummary(from, to time.Time, userID *int) ([]models.PaymentOccurrence, error) {
+	query := `SELECT ` + occSelectCols + `,
 		p.id, p.title, p.amount, p.currency, p.periodicity, p.next_payment_date, p.is_active, p.created_by, p.created_at, p.updated_at, p.deleted_at
 		FROM payment_occurrences o
 		JOIN recurring_payments p ON p.id = o.recurring_payment_id
-		WHERE o.due_date >= ? AND o.due_date <= ? AND p.deleted_at IS NULL`,
-		formatDate(from), formatDate(to))
+		WHERE o.due_date >= ? AND o.due_date <= ? AND p.deleted_at IS NULL`
+	args := []interface{}{formatDate(from), formatDate(to)}
+	if userID != nil {
+		query += ` AND EXISTS (SELECT 1 FROM recurring_payment_users rpu WHERE rpu.recurring_payment_id = p.id AND rpu.user_id = ?)`
+		args = append(args, *userID)
+	}
+	rows, err := s.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +308,26 @@ func (s *Store) ListOccurrencesForSummary(from, to time.Time) ([]models.PaymentO
 	return out, rows.Err()
 }
 
+func (s *Store) SumPaidOccurrences(userID int, currency string, from, to time.Time) (decimal.Decimal, error) {
+	var total string
+	err := s.DB.QueryRow(`SELECT COALESCE(SUM(CAST(p.amount AS DECIMAL)), 0)
+		FROM payment_occurrences o
+		JOIN recurring_payments p ON p.id = o.recurring_payment_id
+		WHERE o.is_paid = 1 AND p.currency = ? AND o.due_date >= ? AND o.due_date <= ?
+		AND p.deleted_at IS NULL
+		AND EXISTS (SELECT 1 FROM recurring_payment_users rpu
+			WHERE rpu.recurring_payment_id = p.id AND rpu.user_id = ?)`,
+		currency, formatDate(from), formatDate(to), userID).Scan(&total)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	value, err := decimal.NewFromString(total)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return value, nil
+}
+
 func (s *Store) ListDueForReminder(today time.Time, horizon int) ([]models.PaymentOccurrence, error) {
 	return s.listDueWithSentColumn(today, horizon, "reminder_sent_at")
 }
@@ -251,6 +338,56 @@ func (s *Store) ListDueForEmailReminder(today time.Time, horizon int) ([]models.
 
 func (s *Store) ListDueForWebhookReminder(today time.Time, horizon int) ([]models.PaymentOccurrence, error) {
 	return s.listDueWithSentColumn(today, horizon, "webhook_reminder_sent_at")
+}
+
+func (s *Store) CreateNotification(n *models.Notification) error {
+	_, err := s.DB.Exec(`INSERT INTO notifications (type, title, message, occurrence_id, user_id, channel) VALUES (?, ?, ?, ?, ?, ?)`,
+		n.Type, n.Title, n.Message, n.OccurrenceID, n.UserID, n.Channel)
+	return err
+}
+
+func (s *Store) ListNotifications(page, pageSize int, unreadOnly bool, userID *int) ([]models.Notification, int, error) {
+	if page < 1 { page = 1 }
+	if pageSize < 1 || pageSize > 100 { pageSize = 20 }
+	where := " WHERE 1=1"
+	args := []interface{}{}
+	if userID != nil {
+		where += " AND user_id = ?"
+		args = append(args, *userID)
+	}
+	if unreadOnly { where += " AND is_read = 0" }
+	var total int
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM notifications"+where, args...).Scan(&total); err != nil { return nil, 0, err }
+	args = append(args, pageSize, (page-1)*pageSize)
+	rows, err := s.DB.Query(`SELECT id, type, title, message, occurrence_id, user_id, channel, is_read, created_at FROM notifications`+where+` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, args...)
+	if err != nil { return nil, 0, err }
+	defer rows.Close()
+	items := []models.Notification{}
+	for rows.Next() {
+		var n models.Notification
+		var occurrence, targetUser sql.NullInt64
+		if err := rows.Scan(&n.ID, &n.Type, &n.Title, &n.Message, &occurrence, &targetUser, &n.Channel, &n.IsRead, &n.CreatedAt); err != nil { return nil, 0, err }
+		if occurrence.Valid { id := int(occurrence.Int64); n.OccurrenceID = &id }
+		if targetUser.Valid { id := int(targetUser.Int64); n.UserID = &id }
+		items = append(items, n)
+	}
+	return items, total, rows.Err()
+}
+
+func (s *Store) MarkNotificationRead(id int, userID *int) error {
+	q := `UPDATE notifications SET is_read = 1 WHERE id = ?`
+	args := []interface{}{id}
+	if userID != nil { q += ` AND user_id = ?`; args = append(args, *userID) }
+	_, err := s.DB.Exec(q, args...)
+	return err
+}
+
+func (s *Store) MarkAllNotificationsRead(userID *int) error {
+	q := `UPDATE notifications SET is_read = 1 WHERE is_read = 0`
+	args := []interface{}{}
+	if userID != nil { q += ` AND user_id = ?`; args = append(args, *userID) }
+	_, err := s.DB.Exec(q, args...)
+	return err
 }
 
 func (s *Store) MarkEmailReminderSent(id int) error {

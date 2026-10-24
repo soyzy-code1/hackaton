@@ -46,6 +46,7 @@ func NewRouter(cfg config.Config, st *store.Store) *gin.Engine {
 	payments := v1.Group("/recurring-payments", authMiddleware(cfg, st))
 	payments.GET("", s.listRecurringPayments)
 	payments.POST("", requireAdmin, s.createRecurringPayment)
+	payments.PATCH("/:id", requireAdmin, s.updateRecurringPayment)
 	payments.DELETE("/:id", requireAdmin, s.deleteRecurringPayment)
 
 	occ := v1.Group("/payment-occurrences", authMiddleware(cfg, st))
@@ -55,11 +56,108 @@ func NewRouter(cfg config.Config, st *store.Store) *gin.Engine {
 
 	v1.GET("/payments/summary", authMiddleware(cfg, st), s.summary)
 
+	budgets := v1.Group("/budgets", authMiddleware(cfg, st))
+	budgets.GET("", s.listBudgets)
+	budgets.PUT("/:currency", s.updateBudget)
+
 	internal := v1.Group("/internal", internalTokenMiddleware(cfg))
 	internal.GET("/due-occurrences", s.dueOccurrences)
 	internal.POST("/occurrences/:id/mark-reminded", s.markReminded)
+	internal.POST("/notifications", s.createNotification)
+
+	notifications := v1.Group("/notifications", authMiddleware(cfg, st))
+	notifications.GET("", s.listNotifications)
+	notifications.PATCH("/:id", s.markNotificationRead)
+	notifications.POST("/read-all", s.markAllNotificationsRead)
 
 	return r
+}
+
+type notificationOut struct {
+	ID           int       `json:"id"`
+	Type         string    `json:"type"`
+	Title        string    `json:"title"`
+	Message      string    `json:"message"`
+	OccurrenceID *int      `json:"occurrence_id"`
+	IsRead       bool      `json:"is_read"`
+	CreatedAt    time.Time `json:"created_at"`
+	Channels     []string  `json:"channels"`
+}
+
+func toNotificationOut(n models.Notification) notificationOut {
+	return notificationOut{ID: n.ID, Type: n.Type, Title: n.Title, Message: n.Message, OccurrenceID: n.OccurrenceID, IsRead: n.IsRead, CreatedAt: n.CreatedAt, Channels: []string{n.Channel}}
+}
+
+func (s *Server) createNotification(c *gin.Context) {
+	var body struct {
+		Type         string `json:"type"`
+		Title        string `json:"title"`
+		Message      string `json:"message"`
+		OccurrenceID *int   `json:"occurrence_id"`
+		UserID       *int   `json:"user_id"`
+		Channel      string `json:"channel"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Title == "" || body.Channel == "" {
+		writeAppError(c, apperr.ValidationError)
+		return
+	}
+	if body.Type == "" {
+		body.Type = "reminder"
+	}
+	// Channel workers send only the occurrence id. Fan out to every assigned user.
+	if body.UserID == nil && body.OccurrenceID != nil {
+		occurrence, err := s.St.GetOccurrence(*body.OccurrenceID)
+		if err != nil || occurrence == nil {
+			writeAppError(c, apperr.New(http.StatusNotFound, "Occurrence not found", "NOT_FOUND"))
+			return
+		}
+		assigned, err := s.St.PaymentAssignees(occurrence.RecurringPaymentID)
+		if err != nil { c.Status(http.StatusInternalServerError); return }
+		for _, id := range assigned {
+			target := id
+			if err := s.St.CreateNotification(&models.Notification{Type: body.Type, Title: body.Title, Message: body.Message, OccurrenceID: body.OccurrenceID, UserID: &target, Channel: body.Channel}); err != nil {
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+		}
+		c.Status(http.StatusCreated)
+		return
+	}
+	if err := s.St.CreateNotification(&models.Notification{Type: body.Type, Title: body.Title, Message: body.Message, OccurrenceID: body.OccurrenceID, UserID: body.UserID, Channel: body.Channel}); err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	c.Status(http.StatusCreated)
+}
+
+func (s *Server) listNotifications(c *gin.Context) {
+	page, _ := strconvAtoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconvAtoi(c.DefaultQuery("page_size", "20"))
+	user, _ := currentUser(c)
+	var userID *int
+	if user.Role != "admin" { userID = &user.ID }
+	items, total, err := s.St.ListNotifications(page, pageSize, c.Query("unread_only") == "true", userID)
+	if err != nil { c.Status(http.StatusInternalServerError); return }
+	out := make([]notificationOut, 0, len(items))
+	for _, item := range items { out = append(out, toNotificationOut(item)) }
+	c.JSON(http.StatusOK, gin.H{"items": out, "total": total, "page": page, "page_size": pageSize})
+}
+
+func (s *Server) markNotificationRead(c *gin.Context) {
+	id, _ := strconvAtoi(c.Param("id"))
+	user, _ := currentUser(c)
+	var userID *int
+	if user.Role != "admin" { userID = &user.ID }
+	if err := s.St.MarkNotificationRead(id, userID); err != nil { c.Status(http.StatusInternalServerError); return }
+	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) markAllNotificationsRead(c *gin.Context) {
+	user, _ := currentUser(c)
+	var userID *int
+	if user.Role != "admin" { userID = &user.ID }
+	if err := s.St.MarkAllNotificationsRead(userID); err != nil { c.Status(http.StatusInternalServerError); return }
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) login(c *gin.Context) {
@@ -92,22 +190,18 @@ func (s *Server) login(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-	// Same-origin frontend uses this HttpOnly cookie on page reloads.
-	// The JSON token remains for API clients/backwards compatibility.
+	// Browser sessions are authenticated only through this HttpOnly cookie.
+	// The JWT is intentionally not returned in the response body.
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "invoice_keeper_token",
+		Name:     "access_token",
 		Value:    token,
 		Path:     "/",
-		MaxAge:   s.Cfg.SessionTTLHours * 60 * 60,
+		MaxAge:   24 * 60 * 60,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   c.Request.TLS != nil,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"access_token": token,
-		"token_type":   "bearer",
-		"user":         toUserOut(user),
-	})
+	c.JSON(http.StatusOK, gin.H{"user": toUserOut(user)})
 }
 
 func (s *Server) me(c *gin.Context) {
@@ -116,13 +210,7 @@ func (s *Server) me(c *gin.Context) {
 }
 
 func (s *Server) logout(c *gin.Context) {
-	token := ""
-	h := c.GetHeader("Authorization")
-	if h != "" && strings.HasPrefix(strings.ToLower(h), "bearer ") {
-		token = strings.TrimSpace(h[7:])
-	} else if cookie, err := c.Request.Cookie("invoice_keeper_token"); err == nil {
-		token = strings.TrimSpace(cookie.Value)
-	}
+	token := s.authTokenFromRequest(c)
 	if token == "" {
 		writeAppError(c, apperr.AuthRequired)
 		return
@@ -140,7 +228,7 @@ func (s *Server) logout(c *gin.Context) {
 		_ = s.St.RevokeToken(claims.JTI, exp)
 	}
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name: "invoice_keeper_token", Value: "", Path: "/", MaxAge: -1,
+		Name: "access_token", Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: c.Request.TLS != nil,
 	})
 	c.Status(http.StatusNoContent)
@@ -276,6 +364,16 @@ func (s *Server) listRecurringPayments(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	user, _ := currentUser(c)
+	if user.Role != "admin" {
+		filtered := items[:0]
+		for _, item := range items {
+			for _, assignedID := range item.AssignedUserIDs {
+				if assignedID == user.ID { filtered = append(filtered, item); break }
+			}
+		}
+		items = filtered
+	}
 	out := make([]recurringPaymentOut, 0, len(items))
 	for _, p := range items {
 		out = append(out, toPaymentOut(&p))
@@ -290,6 +388,7 @@ func (s *Server) createRecurringPayment(c *gin.Context) {
 		Currency        string          `json:"currency"`
 		NextPaymentDate string          `json:"next_payment_date"`
 		Periodicity     string          `json:"periodicity"`
+		AssignedUserIDs []int           `json:"assigned_user_ids"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		writeAppError(c, apperr.ValidationError)
@@ -316,16 +415,148 @@ func (s *Server) createRecurringPayment(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-	_, err = service.EnsureNextOccurrence(s.St, s.Cfg, p)
+	assigned := body.AssignedUserIDs
+	if len(assigned) == 0 {
+		users, err := s.St.ListUsers()
+		if err != nil { c.Status(http.StatusInternalServerError); return }
+		for _, candidate := range users { if candidate.Role == "user" && candidate.IsActive { assigned = append(assigned, candidate.ID) } }
+	}
+	if err := s.St.SetPaymentAssignees(p.ID, assigned); err != nil { c.Status(http.StatusInternalServerError); return }
+	p.AssignedUserIDs = assigned
+	occurrence, err := service.EnsureNextOccurrence(s.St, s.Cfg, p)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
+	}
+	if occurrence != nil && s.Cfg.SMTPConfigured() {
+		data := notify.DueReminderData{
+			OccurrenceID: occurrence.ID, RecurringPaymentID: p.ID,
+			Title: p.Title, Amount: p.Amount.StringFixed(2), Currency: p.Currency,
+			DueDate: dates.FormatDate(occurrence.DueDate),
+			DaysLeft: dates.DaysLeft(occurrence.DueDate, s.Cfg.Timezone),
+		}
+		if err := notify.SendPaymentCreatedEmail(s.Cfg, data); err != nil {
+			c.Error(err)
+		} else {
+			occurrenceID := occurrence.ID
+			_ = s.St.CreateNotification(&models.Notification{
+				Type: "created", Title: "Email: создан платеж " + p.Title,
+				Message: p.Title + " — " + p.Amount.StringFixed(2) + " " + p.Currency + ", срок " + data.DueDate,
+				OccurrenceID: &occurrenceID, UserID: &admin.ID, Channel: "email",
+			})
+		}
 	}
 	notify.PostWebhookAsync(s.Cfg, notify.EventRecurringPaymentCreated, notify.RecurringPaymentData{
 		ID: p.ID, Title: p.Title, Amount: p.Amount.StringFixed(2),
 		Currency: p.Currency, NextPaymentDate: dates.FormatDate(p.NextPaymentDate),
 	})
 	c.JSON(http.StatusCreated, toPaymentOut(p))
+}
+
+func (s *Server) updateRecurringPayment(c *gin.Context) {
+	id, err := strconvAtoi(c.Param("id"))
+	if err != nil {
+		writeAppError(c, apperr.ValidationError)
+		return
+	}
+	payment, err := s.St.GetRecurringPayment(id)
+	if err != nil || payment == nil || payment.DeletedAt != nil {
+		writeAppError(c, apperr.New(http.StatusNotFound, "Payment not found", "NOT_FOUND"))
+		return
+	}
+	var body struct {
+		Title           *string          `json:"title"`
+		Amount          *decimal.Decimal `json:"amount"`
+		Currency        *string          `json:"currency"`
+		NextPaymentDate *string          `json:"next_payment_date"`
+		Periodicity     *string          `json:"periodicity"`
+		IsActive        *bool            `json:"is_active"`
+		AssignedUserIDs *[]int           `json:"assigned_user_ids"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeAppError(c, apperr.ValidationError)
+		return
+	}
+	if body.Title != nil {
+		payment.Title = strings.TrimSpace(*body.Title)
+		if payment.Title == "" {
+			writeAppError(c, apperr.ValidationError)
+			return
+		}
+	}
+	if body.Amount != nil {
+		if body.Amount.LessThanOrEqual(decimal.Zero) {
+			writeAppError(c, apperr.ValidationError)
+			return
+		}
+		payment.Amount = *body.Amount
+	}
+	if body.Currency != nil {
+		payment.Currency = strings.ToUpper(strings.TrimSpace(*body.Currency))
+	}
+	if body.NextPaymentDate != nil {
+		date, parseErr := dates.ParseDate(*body.NextPaymentDate)
+		if parseErr != nil {
+			writeAppError(c, apperr.ValidationError)
+			return
+		}
+		payment.NextPaymentDate = date
+	}
+	if body.Periodicity != nil {
+		payment.Periodicity = strings.TrimSpace(*body.Periodicity)
+		if payment.Periodicity == "" {
+			writeAppError(c, apperr.ValidationError)
+			return
+		}
+	}
+	if body.IsActive != nil {
+		payment.IsActive = *body.IsActive
+	}
+	if body.AssignedUserIDs != nil {
+		assigned, validationErr := s.validatePaymentAssignees(*body.AssignedUserIDs)
+		if validationErr != nil {
+			writeAppError(c, validationErr)
+			return
+		}
+		if err := s.St.SetPaymentAssignees(id, assigned); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		payment.AssignedUserIDs = assigned
+	}
+	if err := s.St.UpdateRecurringPayment(payment); err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	if body.AssignedUserIDs == nil {
+		payment.AssignedUserIDs, _ = s.St.PaymentAssignees(id)
+	}
+	c.JSON(http.StatusOK, toPaymentOut(payment))
+}
+
+func (s *Server) validatePaymentAssignees(ids []int) ([]int, *apperr.AppError) {
+	users, err := s.St.ListUsers()
+	if err != nil {
+		return nil, apperr.New(http.StatusInternalServerError, "Unable to load users", "INTERNAL_ERROR")
+	}
+	valid := make(map[int]bool, len(users))
+	for _, user := range users {
+		if user.Role == "user" && user.IsActive {
+			valid[user.ID] = true
+		}
+	}
+	seen := make(map[int]bool, len(ids))
+	out := make([]int, 0, len(ids))
+	for _, userID := range ids {
+		if !valid[userID] {
+			return nil, apperr.New(http.StatusUnprocessableEntity, "Invalid payment assignee", "VALIDATION_ERROR")
+		}
+		if !seen[userID] {
+			seen[userID] = true
+			out = append(out, userID)
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) deleteRecurringPayment(c *gin.Context) {
@@ -373,7 +604,10 @@ func (s *Server) listOccurrences(c *gin.Context) {
 			to = &t
 		}
 	}
-	rows, err := s.St.ListOccurrences(currency, rid, from, to)
+	user, _ := currentUser(c)
+	var userID *int
+	if user.Role != "admin" { userID = &user.ID }
+	rows, err := s.St.ListOccurrences(currency, rid, from, to, userID)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
@@ -420,11 +654,28 @@ func occurrenceMatchesStatus(item occurrenceOut, status string) bool {
 func (s *Server) getOccurrence(c *gin.Context) {
 	id, _ := strconvAtoi(c.Param("id"))
 	o, err := s.St.GetOccurrence(id)
-	if err != nil || o == nil {
+	if err != nil || o == nil || !s.userCanAccessOccurrence(c, o) {
 		writeAppError(c, apperr.New(http.StatusNotFound, "Occurrence not found", "NOT_FOUND"))
 		return
 	}
 	s.writeOccurrenceJSON(c, o)
+}
+
+func (s *Server) userCanAccessOccurrence(c *gin.Context, occurrence *models.PaymentOccurrence) bool {
+	user, _ := currentUser(c)
+	if user == nil || user.Role == "admin" {
+		return true
+	}
+	assigned, err := s.St.PaymentAssignees(occurrence.RecurringPaymentID)
+	if err != nil {
+		return false
+	}
+	for _, id := range assigned {
+		if id == user.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) writeOccurrenceJSON(c *gin.Context, o *models.PaymentOccurrence) {
@@ -438,7 +689,7 @@ func (s *Server) writeOccurrenceJSON(c *gin.Context, o *models.PaymentOccurrence
 func (s *Server) patchOccurrence(c *gin.Context) {
 	id, _ := strconvAtoi(c.Param("id"))
 	o, err := s.St.GetOccurrence(id)
-	if err != nil || o == nil {
+	if err != nil || o == nil || !s.userCanAccessOccurrence(c, o) {
 		writeAppError(c, apperr.New(http.StatusNotFound, "Occurrence not found", "NOT_FOUND"))
 		return
 	}
@@ -526,6 +777,62 @@ func (s *Server) patchOccurrence(c *gin.Context) {
 	s.writeOccurrenceJSON(c, updated)
 }
 
+func (s *Server) listBudgets(c *gin.Context) {
+	user, _ := currentUser(c)
+	budgets, err := s.St.GetBudgets(user.ID)
+	if err != nil { c.Status(http.StatusInternalServerError); return }
+	monthFrom, monthTo := dates.MonthBounds(s.Cfg.Timezone)
+	today := dates.TodayInTZ(s.Cfg.Timezone)
+	yearFrom := time.Date(today.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
+	yearTo := time.Date(today.Year(), time.December, 31, 0, 0, 0, 0, time.UTC)
+	out := make([]gin.H, 0, 3)
+	for _, currency := range []string{"RUB", "USD", "EUR"} {
+		limits := budgets[currency]
+		monthlyLimit, _ := decimal.NewFromString(limits[0])
+		yearlyLimit, _ := decimal.NewFromString(limits[1])
+		spentMonth, err := s.St.SumPaidOccurrences(user.ID, currency, monthFrom, monthTo)
+		if err != nil { c.Status(http.StatusInternalServerError); return }
+		spentYear, err := s.St.SumPaidOccurrences(user.ID, currency, yearFrom, yearTo)
+		if err != nil { c.Status(http.StatusInternalServerError); return }
+		out = append(out, gin.H{
+			"currency": currency,
+			"monthly_limit": monthlyLimit.StringFixed(2),
+			"yearly_limit": yearlyLimit.StringFixed(2),
+			"spent_month": spentMonth.StringFixed(2),
+			"spent_year": spentYear.StringFixed(2),
+			"remaining_month": decimal.Max(decimal.Zero, monthlyLimit.Sub(spentMonth)).StringFixed(2),
+			"remaining_year": decimal.Max(decimal.Zero, yearlyLimit.Sub(spentYear)).StringFixed(2),
+		})
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (s *Server) updateBudget(c *gin.Context) {
+	currency := strings.ToUpper(strings.TrimSpace(c.Param("currency")))
+	if currency != "RUB" && currency != "USD" && currency != "EUR" { writeAppError(c, apperr.ValidationError); return }
+	var body struct { MonthlyLimit *decimal.Decimal `json:"monthly_limit"`; YearlyLimit *decimal.Decimal `json:"yearly_limit"` }
+	if err := c.ShouldBindJSON(&body); err != nil || body.MonthlyLimit == nil || body.YearlyLimit == nil || body.MonthlyLimit.IsNegative() || body.YearlyLimit.IsNegative() { writeAppError(c, apperr.ValidationError); return }
+	user, _ := currentUser(c)
+	if err := s.St.UpsertBudget(user.ID, currency, body.MonthlyLimit.StringFixed(2), body.YearlyLimit.StringFixed(2)); err != nil { c.Status(http.StatusInternalServerError); return }
+	monthFrom, monthTo := dates.MonthBounds(s.Cfg.Timezone)
+	today := dates.TodayInTZ(s.Cfg.Timezone)
+	yearFrom := time.Date(today.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
+	yearTo := time.Date(today.Year(), time.December, 31, 0, 0, 0, 0, time.UTC)
+	spentMonth, err := s.St.SumPaidOccurrences(user.ID, currency, monthFrom, monthTo)
+	if err != nil { c.Status(http.StatusInternalServerError); return }
+	spentYear, err := s.St.SumPaidOccurrences(user.ID, currency, yearFrom, yearTo)
+	if err != nil { c.Status(http.StatusInternalServerError); return }
+	c.JSON(http.StatusOK, gin.H{
+		"currency": currency,
+		"monthly_limit": body.MonthlyLimit.StringFixed(2),
+		"yearly_limit": body.YearlyLimit.StringFixed(2),
+		"spent_month": spentMonth.StringFixed(2),
+		"spent_year": spentYear.StringFixed(2),
+		"remaining_month": decimal.Max(decimal.Zero, body.MonthlyLimit.Sub(spentMonth)).StringFixed(2),
+		"remaining_year": decimal.Max(decimal.Zero, body.YearlyLimit.Sub(spentYear)).StringFixed(2),
+	})
+}
+
 func (s *Server) summary(c *gin.Context) {
 	from, to := dates.MonthBounds(s.Cfg.Timezone)
 	if v := c.Query("from"); v != "" {
@@ -535,7 +842,12 @@ func (s *Server) summary(c *gin.Context) {
 		to, _ = dates.ParseDate(v)
 	}
 
-	rows, err := s.St.ListOccurrencesForSummary(from, to)
+	user, _ := currentUser(c)
+	var userID *int
+	if user.Role != "admin" {
+		userID = &user.ID
+	}
+	rows, err := s.St.ListOccurrencesForSummary(from, to, userID)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return

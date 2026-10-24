@@ -12,6 +12,18 @@ var initSQL string
 //go:embed migrations/002_notify_channels.sql
 var notifyChannelsSQL string
 
+//go:embed migrations/003_notifications.sql
+var notificationsSQL string
+
+//go:embed migrations/004_notification_users.sql
+var notificationUsersSQL string
+
+//go:embed migrations/005_user_budgets.sql
+var userBudgetsSQL string
+
+//go:embed migrations/006_payment_assignments.sql
+var paymentAssignmentsSQL string
+
 func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(initSQL); err != nil {
 		return err
@@ -22,6 +34,40 @@ func Migrate(db *sql.DB) error {
 			continue
 		}
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return err
+		}
+	}
+	for _, stmt := range strings.Split(notificationsSQL, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return err
+		}
+	}
+	for _, stmt := range strings.Split(notificationUsersSQL, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return err
+		}
+	}
+	for _, stmt := range strings.Split(userBudgetsSQL, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return err
+		}
+	}
+	for _, stmt := range strings.Split(paymentAssignmentsSQL, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" { continue }
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
 			return err
 		}
 	}
