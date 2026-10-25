@@ -1,215 +1,397 @@
-# Invoice Keeper — запуск окружения
+<div align="center">
 
-## Production на VPS
+# 💰 Invoice Keeper
 
-Внешний адрес стенда: `http://193.233.246.197/`. `localhost` в Docker healthcheck'ах и `http://backend:8000` для внутренней связи контейнеров являются намеренными и не заменяются. Для диагностических скриптов можно переопределить адрес переменной `BASE_URL`.
+**Веб-панель учёта регулярных платежей с автоматическими напоминаниями в Telegram, VK и по email**
 
-## Быстрая настройка своих Telegram-данных
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-5.4-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docs.docker.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
+[![nginx](https://img.shields.io/badge/nginx-1.27-009639?style=flat-square&logo=nginx&logoColor=white)](https://nginx.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](https://opensource.org/licenses/MIT)
 
-1. Скопируйте корневой [`.env.example`](.env.example) в `.env`.
-2. Создайте бота через [@BotFather](https://t.me/BotFather), вставьте токен в `BOT_TOKEN`.
-3. Добавьте бота в нужную группу, выдайте право отправлять сообщения и укажите реальный `TELEGRAM_CHAT_ID`.
-4. Если нужна кнопка в веб-интерфейсе, укажите публичную ссылку на бота в `VITE_TELEGRAM_BOT_URL` в [`frontend/.env.example`](frontend/.env.example).
-5. Для VK настройте `VK_GROUP_TOKEN`, `VK_GROUP_ID`, `VK_PEER_ID` в [`bot/.env.example`](bot/.env.example).
-6. После изменения `.env` пересоберите контейнеры: `docker compose up -d --build`.
+[Демо-стенд](http://193.233.246.197/) · [Swagger UI](http://193.233.246.197/api/v1/docs) · [OpenAPI](http://193.233.246.197/api/v1/openapi.json)
 
-Токены не публикуйте в Git и не добавляйте в `VITE_*`: переменные `VITE_*` попадают в браузерный JavaScript.
+</div>
 
-## Windows без WSL
+---
 
-На Windows без WSL и Git Bash используйте `.bat`-версии:
+## 📖 О проекте
 
-```cmd
-scripts\reset-demo.bat
-scripts\seed-test-data.bat
-scripts\check-stand.bat
+**Invoice Keeper** — система учёта регулярных платежей (аренда, подписки, серверы, коммунальные услуги), которая сама напоминает о сроках оплаты и ведёт историю каждого периода.
+
+Ключевая идея: пользователь один раз описывает платёж — сумму, валюту, периодичность и ответственных, — а система сама материализует **периоды (occurrences)**, считает просрочку, строит бюджет по месяцам и годам и рассылает напоминания в привычные каналы связи.
+
+<div align="center">
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          Браузер пользователя                        │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                │ HTTP
+┌───────────────────────────────▼─────────────────────────────────────┐
+│                        nginx :80 (reverse proxy)                    │
+│         /api/* → backend:8000    /  → статика SPA (nginx)          │
+└───────────┬───────────────────────────────────┬─────────────────────┘
+            │                                   │
+┌───────────▼────────────┐          ┌───────────▼─────────────┐
+│  frontend (React SPA)  │          │  backend (Go + Gin)     │
+│  nginx:1.27-alpine     │          │  :8000                  │
+│  порт 3000             │          │  JWT + RBAC + audit log │
+└────────────────────────┘          │  SQLite / volume        │
+                                    │  notify worker (SMTP)   │
+                                    └───────────┬─────────────┘
+                                                │ X-Internal-Token
+                                    ┌───────────▼─────────────┐
+                                    │  bot (Python + aiogram) │
+                                    │  Telegram · VK · QR     │
+                                    │  APScheduler           │
+                                    └─────────────────────────┘
 ```
 
-На Linux/macOS используйте соответствующие `.sh`-версии:
+</div>
+
+---
+
+## ✨ Основной функционал
+
+### 💳 Учёт регулярных платежей
+
+- **Регулярные платежи** — карточка платежа: название, сумма, валюта, периодичность (`monthly`, `quarterly`, `yearly`, …), дата следующего платежа, список ответственных.
+- **Автоматическая материализация периодов** — каждый платёж порождает цепочку начислений; при отметке «оплачено» автоматически создаётся следующий период.
+- **Мультивалютность** — RUB, USD, EUR и другие; сводки и бюджеты считаются раздельно по валютам, без скрытого конвертирования.
+- **Импорт CSV** — массовое заполнение платежей через модальное окно импорта.
+- **Soft-delete** — удалённый платёж не пропадает из истории, а просто перестаёт быть активным.
+
+### 🔔 Напоминания и уведомления
+
+| Канал | Реализация | Особенности |
+|-------|-----------|-------------|
+| **Telegram** | `aiogram` long polling | Inline-кнопка **«✅ Оплачено»**, QR-код платежа, дедупликация по `occurrence_id`, устойчивый polling-цикл без падения при `TelegramConflictError` |
+| **VK** | `aiohttp` + Bots Long Poll | Inline-кнопка отметки оплаты, `message_event`-обработка |
+| **Email (SMTP)** | `gomail` в Go-воркере | Fallback портов `465 → 587 → 2525`, `From = SMTP_USER`, защита от повторной отправки |
+| **Webhook** | `net/http` в Go | Подписка на события для внешних систем |
+
+- Общий планировщик: ежедневная проверка в `SCHEDULER_HOUR:SCHEDULER_MINUTE` + оперативный опрос каждые `REMINDER_POLL_SECONDS` секунд.
+- Локальный SQLite-журнал отправок не даёт прислать одно и то же напоминание дважды.
+- **GigaChat** — встроенный AI-ассистент на странице `/assistant` отвечает на вопросы по платежам.
+
+### 📊 Аналитика и планирование
+
+- **Дашборд** — сводка по доходам/расходам, ближайшие платежи, просроченные начисления, фильтры по статусу и валюте.
+- **Календарь** — сетка платежей по дням месяца с быстрой отметкой оплаты.
+- **Аналитика** — тренды по месяцам, динамика «оплачено / осталось», экспорт в CSV.
+- **Бюджет** — лимиты по валютам на месяц и год, сравнение план/факт/перерасход.
+- **Планирование** — сводка «на дату»: сколько к оплате, сколько просрочено, укладывается ли в бюджет.
+
+### 🔐 Безопасность и администрирование
+
+- JWT-аутентификация с отзывом токенов (`revoked_tokens`) и TTL сессии.
+- **RBAC**: администратор управляет пользователями, платежами, бюджетами и аудит-логом; обычный пользователь — только свои данные.
+- **Аудит-лог** — каждое изменение фиксируется с автором, действием и таймстампом; доступен с пагинацией и фильтром по типу действия.
+- **Управление пользователями** — создание, редактирование, блокировка, смена ролей.
+- **Внутренний API** для бота защищён заголовком `X-Internal-Token` и не выставлен в публичный интерфейс.
+
+### 🌱 Прочее
+
+- Тёмная/светлая тема, адаптивная вёрстка, i18n-формат дат и валют под выбранный регион.
+- Встроенный **mock-режим** фронтенда (`VITE_USE_MOCK=true`) — демонстрация интерфейса без бэкенда.
+- Полная OpenAPI 3.1 спецификация со встроенным Swagger UI.
+- Автоматический деплой на VPS через GitHub Actions с preflight-проверкой секретов, health-check и smoke-тестами каналов.
+
+---
+
+## 🛠 Стек
+
+### Frontend — [`frontend/`](frontend)
+
+| Технология | Версия | Назначение |
+|------------|--------|------------|
+| React | 18.3 | UI-библиотека |
+| TypeScript | 5.6 | Типизация, `tsc -b` в сборке |
+| Vite | 5.4 | Бандлер и dev-сервер |
+| Tailwind CSS | 3.4 | Стили и дизайн-токены |
+| React Router | 6.28 | Клиентская маршрутизация |
+| Zustand | 5.0 | Хранилище состояния (auth, settings) |
+| Chart.js + react-chartjs-2 | 4.4 | Графики аналитики |
+| lucide-react | 0.454 | Иконки |
+
+### Backend — [`backend/`](backend)
+
+| Технология | Версия | Назначение |
+|------------|--------|------------|
+| Go | 1.25 | Язык сервиса |
+| Gin | 1.10 | HTTP-роутинг, middleware |
+| `golang-jwt/jwt/v5` | 5.2 | Аутентификация |
+| `modernc.org/sqlite` | 1.34 | SQLite **без cgo** (чистый Go) |
+| `jackc/pgx/v5` | 5.7 | Драйвер PostgreSQL (подготовлен) |
+| `shopspring/decimal` | 1.4 | Точные денежные расчёты |
+| `gopkg.in/gomail.v2` | — | SMTP-отправка писем |
+| `skip2/go-qrcode` | — | QR-коды платежей |
+| `gopkg.in/yaml.v3` | 3.0 | Разбор OpenAPI-спецификации |
+
+### Bot — [`bot/`](bot)
+
+| Технология | Версия | Назначение |
+|------------|--------|------------|
+| Python | 3.11 | Язык сервиса |
+| aiogram | 3.31 | Telegram Bot API |
+| aiohttp / aiohttp-socks | 3.14 | HTTP-клиент и VK Long Poll, SOCKS-прокси |
+| APScheduler | 3.10 | Планировщик задач |
+| Pydantic | 2.13 | Валидация моделей данных |
+| qrcode + Pillow | 7.4 | Генерация QR-кодов |
+
+### Инфраструктура
+
+| Компонент | Версия | Роль |
+|-----------|--------|------|
+| Docker Compose | v2 | Оркестрация сервисов |
+| nginx | 1.27-alpine | Reverse proxy, раздача SPA, health-check |
+| PostgreSQL | 16-alpine | Подготовленный сервис БД (бэкенд использует SQLite) |
+| Redis | 7-alpine | Кэш/очереди, health-check |
+| node:20-alpine | — | Сборка фронтенда в multi-stage образе |
+| GitHub Actions | — | CI: тесты + деплой на VPS |
+
+---
+
+## 📂 Структура репозитория
+
+```
+.
+├── backend/                  # Go + Gin API
+│   ├── cmd/server/           # точка входа HTTP-сервера
+│   ├── cmd/smoketest/        # smoke-тест доставки уведомлений
+│   ├── internal/
+│   │   ├── apperr/           # типизированные ошибки
+│   │   ├── auth/             # JWT, хеширование паролей
+│   │   ├── config/           # конфигурация из окружения
+│   │   ├── dates/            # расчёт дат и периодов
+│   │   ├── db/               # подключение и миграции
+│   │   ├── handlers/         # HTTP-хендлеры и роутинг
+│   │   ├── models/           # доменные модели
+│   │   ├── notify/           # SMTP, webhook, события
+│   │   ├── service/          # бизнес-логика, notify worker
+│   │   └── store/            # доступ к данным
+│   ├── openapi.yaml          # OpenAPI 3.1 спецификация
+│   └── api_test.go           # интеграционные тесты
+├── frontend/                 # React SPA
+│   ├── public/               # статика (favicon, иконки)
+│   └── src/
+│       ├── api/              # клиент API и мок-данные
+│       ├── components/       # UI-кит и layout
+│       ├── hooks/            # переиспользуемые хуки
+│       ├── pages/            # страницы приложения
+│       └── store/            # Zustand-сторы
+├── bot/                      # Python-бот напоминаний
+│   ├── channels/             # транспорты: telegram, vk
+│   ├── api_client.py         # клиент backend API
+│   ├── main.py               # event loop и polling
+│   ├── notifier.py           # диспетчер каналов
+│   ├── scheduler.py          # планировщик напоминаний
+│   ├── smoketest.py          # smoke-тест Telegram-доставки
+│   └── storage.py            # SQLite-журнал отправок
+├── infra/nginx/              # конфигурация reverse proxy
+├── scripts/                  # seed, health-check, валидация
+├── .github/workflows/        # CI/CD
+├── docker-compose.yml        # описание стенда
+├── Dockerfile.frontend       # multi-stage сборка SPA
+└── .env.example              # шаблон переменных окружения
+```
+
+---
+
+## 🚀 Быстрый старт
+
+### Требования
+
+- Docker Engine / Docker Desktop
+- Docker Compose v2
+- Свободные порты `80`, `3000`, `8000`, `5432`, `6379`
+
+### Запуск
 
 ```bash
-./scripts/reset-demo.sh
-./scripts/seed-test-data.sh
-./scripts/check-stand.sh
+# 1. Подготовьте окружение
+cp .env.example .env
+#    Windows CMD:      copy .env.example .env
+#    PowerShell:       Copy-Item .env.example .env
+
+# 2. Заполните в .env реальные значения
+#    BOT_TOKEN, TELEGRAM_CHAT_ID, ADMIN_LOGIN, ADMIN_PASSWORD,
+#    INTERNAL_API_TOKEN, SECRET_KEY, SMTP_*
+
+# 3. Поднимите стенд
+docker compose up --build -d
+docker compose ps
+
+# 4. Проверьте готовность
+./scripts/check-stand.sh          # Windows: scripts\check-stand.bat
 ```
 
-## Известные ограничения окружения
+Приложение будет доступно на <http://localhost/> (или на адрес вашего стенда), Swagger UI — на `/api/v1/docs`.
 
-- **PostgreSQL:** текущий Go-бэкенд использует SQLite (`AUTOINCREMENT`, плейсхолдеры `?`, `LastInsertId()`). Переключение на PostgreSQL требует правок Go-кода (`SERIAL`, `$1`, `RETURNING id`) и находится в зоне участника 2 (Backend). PostgreSQL-контейнер оставлен как подготовленный сервис, но текущим бэкендом не используется. Рабочие данные хранятся в volume `invoice_backenddata`.
-- **Кракозябры в названиях платежей:** если в БД или UI видны `������` вместо кириллицы, seed-скрипт мог отправить данные в `cp1251`/`cp866`. Решение: [`scripts/seed-test-data.sh`](scripts/seed-test-data.sh) должен быть сохранён в UTF-8 без BOM, использовать `curl --data-binary` и заголовок `Content-Type: application/json; charset=utf-8`. Payload'ы вынесены в [`scripts/seed/*.json`](scripts/seed/rub.json) в UTF-8. Windows-версия читает JSON-файлы, не хардкодит кириллицу в `.bat`. Вывод `sqlite3`/`curl` в Windows-терминале может отображать кракозябры из-за `cp866`; проверяйте данные через браузер или из Git Bash командой `docker compose exec backend sh -c "sqlite3 ..."`.
-- **Telegram API:** контейнер `bot` использует retry-цикл с интервалом 30 секунд; при сетевой ошибке контейнер остаётся `Up`, а после восстановления сети автоматически повторяет запуск. Если у жюри сеть блокирует Telegram, это ограничение сети, а не кода.
-- **Токен бота:** в `.env` должен быть реальный `BOT_TOKEN`, полученный у [@BotFather](https://t.me/BotFather). Тестовые токены не использовать.
-- **TELEGRAM_CHAT_ID:** значение должно быть реальным. `-1001234567890` — шаблон, с ним Telegram ответит `400 chat not found`. Перед демо добавьте бота в группу, получите chat ID через @userinfobot или getUpdates, впишите его в `.env` и выполните `docker compose restart bot`.
-- **405 Not Allowed на `/api/`:** проверьте [`infra/nginx/nginx.conf`](infra/nginx/nginx.conf), что `location /api/` содержит `proxy_pass_request_body on`, `proxy_method $request_method`, не содержит `try_files`/`limit_except`, а CORS `OPTIONS` возвращает 204. После изменений выполните `docker compose build --no-cache frontend nginx && docker compose up -d`.
+> 🔐 Секреты из `.env` **никогда** не коммитятся: файл уже в `.gitignore`. Переменные с префиксом `VITE_*` попадают в публичный JS-бандл — секреты туда класть нельзя.
 
-## SMTP-напоминания
+---
 
-Go-бэкенд запускает notify worker, если `SMTP_ENABLED=true`, и проверяет должников при старте и далее с интервалом `NOTIFY_POLL_SECONDS`. Для Mail.ru используется порт `465` с implicit TLS. Укажите логин почты, пароль приложения, реальные `SMTP_FROM` и `SMTP_TO`, а не адреса-заглушки. После успешной отправки occurrence помечается через `email_reminder_sent_at`, поэтому повторная проверка не отправляет письмо повторно для той же записи.
+## ⚙️ Переменные окружения
 
-Проверка:
+Полный шаблон с комментариями — в [`.env.example`](.env.example). Основные группы:
 
-```bash
-docker compose exec backend sh -c 'env | grep SMTP'
-docker compose logs --tail=100 backend | grep -iE 'smtp|notify'
-```
+| Группа | Переменные | Назначение |
+|--------|-----------|------------|
+| **Auth** | `ADMIN_LOGIN`, `ADMIN_PASSWORD`, `SECRET_KEY`, `SESSION_TTL_HOURS` | Учётная запись администратора и подпись JWT |
+| **Internal API** | `INTERNAL_API_TOKEN`, `ADMIN_API_TOKEN` | Доступ бота к служебным эндпоинтам |
+| **Telegram** | `BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SCHEDULER_HOUR`, `REMINDER_POLL_SECONDS` | Бот и расписание напоминаний |
+| **Telegram proxy** | `TELEGRAM_PROXY`, `TELEGRAM_API_URL`, `TELEGRAM_PROXY_WORKER_HOST` | Обход блокировки `api.telegram.org` |
+| **VK** | `VK_GROUP_TOKEN`, `VK_GROUP_ID`, `VK_PEER_ID` | Канал VK Long Poll |
+| **SMTP** | `SMTP_ENABLED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO` | Email-напоминания |
+| **Webhook** | `WEBHOOK_ENABLED`, `WEBHOOK_URL`, `WEBHOOK_SECRET` | Внешние подписки на события |
+| **GigaChat** | `GIGACHAT_ENABLED`, `GIGACHAT_CREDENTIALS`, `GIGACHAT_SCOPE`, `GIGACHAT_AUTH_URL`, `GIGACHAT_API_URL`, `GIGACHAT_MODEL`, `GIGACHAT_VERIFY_TLS` | AI-ассистент на странице `/assistant` (шаблон — в [`backend/.env.example`](backend/.env.example)) |
+| **БД** | `DATABASE_URL`, `POSTGRES_*`, `REDIS_URL` | Подключения к хранилищам |
+| **Порты** | `HTTP_PORT`, `FRONTEND_PORT`, `BACKEND_PORT`, `POSTGRES_PORT`, `REDIS_PORT` | Публикация портов на хост |
 
-Ошибки `535` означают неверные SMTP-учётные данные, `connection refused` — недоступный или неверный порт, `no such host` — неверный host. Проверяйте также папку «Спам».
+### Про блокировку Telegram
 
-## Обход блокировки Telegram без системного VPN
-
-Если сервер не может напрямую подключиться к `api.telegram.org`, создайте бесплатный Cloudflare Worker и используйте его домен как `TELEGRAM_PROXY_WORKER_HOST`. Установите прокси-пакет внутри образа бота и задайте в `.env`:
+Если с сервера недоступен `api.telegram.org` — поднимите Cloudflare Worker-зеркало Bot API:
 
 ```env
 TELEGRAM_PROXY=http://127.0.0.1:8080
-TELEGRAM_PROXY_WORKER_HOST=<твой-worker>.workers.dev
+TELEGRAM_PROXY_WORKER_HOST=<your-worker>.workers.dev
 ```
-
-После этого пересоберите и перезапустите бот:
 
 ```bash
 docker compose up -d --build --force-recreate bot
 ```
 
-`tgwsapiproxy` запускается внутри контейнера, а Telegram-запросы бота проходят через Cloudflare Worker. Системный VPN при этом не нужен: backend продолжает обращаться к SMTP напрямую.
+Внутри контейнера запускается `tgwsapiproxy`, и все Telegram-запросы идут через Worker. Системный VPN при этом не нужен — SMTP работает напрямую.
 
-Проверка прокси:
+---
 
-```bash
-docker compose exec bot sh -c 'curl -x http://127.0.0.1:8080 -s -o /dev/null -w "telegram via proxy: %{http_code}\\n" https://api.telegram.org'
-```
+## 🔌 REST API
 
-Ожидаемый статус — `200` или `302`. Если запрос завершается timeout, проверьте домен и настройки Cloudflare Worker. Пустой `TELEGRAM_PROXY_WORKER_HOST` отключает запуск локального прокси и сохраняет прямое подключение.
+Базовый префикс — `/api/v1`. Аутентификация — заголовок `Authorization: Bearer <access_token>`.
 
-## Как проверить, что напоминание реально доходит
+| Группа | Методы и пути | Доступ |
+|--------|----------------|--------|
+| **auth** | `POST /auth/login`, `GET /auth/me`, `POST /auth/logout` | все |
+| **users** | `GET/POST /users`, `PATCH/DELETE /users/{id}` | admin |
+| **recurring-payments** | `GET/POST /recurring-payments`, `PATCH/DELETE /recurring-payments/{id}` | чтение — все, запись — admin |
+| **payment-occurrences** | `GET /payment-occurrences`, `GET/PATCH /payment-occurrences/{id}` | все |
+| **budgets** | `GET /budgets`, `PUT /budgets/{currency}` | все |
+| **notifications** | `GET /notifications`, `PATCH /notifications/{id}`, `POST /notifications/read-all` | все |
+| **summary** | `GET /payments/summary` | все |
+| **audit-log** | `GET /audit-log` | admin |
+| **assistant** | `POST /chat/gigachat` | user |
+| **internal** | `GET /internal/due-occurrences`, `POST /internal/occurrences/{id}/mark-reminded`, `POST /internal/notifications` | `X-Internal-Token` |
 
-```bash
-docker compose restart bot
-./scripts/seed-test-data.sh
-docker compose logs -f bot
-```
+Полное описание — в [`backend/openapi.yaml`](backend/openapi.yaml) и в Swagger UI на `/api/v1/docs`.
 
-Ожидается лог `reminder sent for occurrence_id=X, due_date=YYYY-MM-DD` и сообщение с кнопкой **✅ Оплачено**. После нажатия ожидается PATCH 200 в логах backend. `TelegramNetworkError` означает сетевую проблему (нужен HTTPS_PROXY), `400 chat not found` — неверный `TELEGRAM_CHAT_ID`.
+---
 
-## Диагностика Telegram-бота
-
-```bash
-docker compose ps bot
-docker compose logs --tail=50 bot
-docker compose exec bot python -c "import os; print('BOT_TOKEN set:', 'yes' if os.getenv('BOT_TOKEN') else 'no'); print('CHAT_ID:', os.getenv('TELEGRAM_CHAT_ID')); print('BACKEND_URL:', os.getenv('BACKEND_URL')); print('INTERNAL_TOKEN set:', 'yes' if os.getenv('INTERNAL_API_TOKEN') else 'no')"
-docker compose exec bot python -c "import urllib.request; print('telegram:', urllib.request.urlopen('https://api.telegram.org', timeout=10).status)"
-docker compose exec bot python -c "import urllib.request; print('backend:', urllib.request.urlopen('http://backend:8000/api/v1/openapi.json', timeout=10).status)"
-docker compose exec bot python -c "import os,urllib.request; u='https://api.telegram.org/bot'+os.environ['BOT_TOKEN']+'/getMe'; print(urllib.request.urlopen(u,timeout=10).read(200).decode())"
-```
-
-## Стек
-
-- **frontend** — React + TypeScript + Vite из [`Vatalone/aeza`](https://github.com/Vatalone/aeza), код размещён в [`frontend/`](frontend).
-- **backend** — Go 1.25 + Gin из [`reznicenkodaniil5/hack`](https://github.com/reznicenkodaniil5/hack), код размещён в [`backend/`](backend).
-- **bot** — Python 3.11 + aiogram + APScheduler, код размещён в [`bot/`](bot).
-- **db** — PostgreSQL 16 как подготовленный инфраструктурный сервис.
-- **Redis** — Redis 7, healthcheck и совместимость с общей сетью.
-- **nginx** — reverse proxy и единая точка входа.
-
-Исходный код `backend/*.go`, `bot/*.py` и `frontend/src/` не изменяется инфраструктурой.
-
-## Требования
-
-- Docker Engine / Docker Desktop.
-- Docker Compose v2.
-- Свободные порты `80`, `3000`, `8000`, `5432`, `6379`.
-
-Проверка:
+## 🧪 Тесты и проверки
 
 ```bash
-docker info
-docker compose version
-```
+# Go-тесты бэкенда
+cd backend && go test ./...
 
-## Подготовка и запуск
+# Сборка и типы фронтенда
+cd frontend && npm ci && npm run build
 
-```bash
-cp .env.example .env
-# Windows CMD: copy .env.example .env
-# PowerShell: Copy-Item .env.example .env
-```
+# Синтаксическая проверка бота
+python -m compileall -q bot
 
-Заполнить в `.env` реальные `BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ADMIN_LOGIN`, `ADMIN_PASSWORD` и `INTERNAL_API_TOKEN`. Для токена internal API можно использовать `openssl rand -hex 32`.
-
-```bash
-docker compose up --build -d
-docker compose ps
+# Полная проверка стенда (HTTP, контейнеры, логи, БД)
 ./scripts/check-stand.sh
 ```
 
-Основные адреса:
-
-- приложение: <http://193.233.246.197/>;
-- Swagger UI: <http://193.233.246.197/api/v1/docs>;
-- OpenAPI: <http://193.233.246.197/api/v1/openapi.json>.
-
-## Сценарий демонстрации
-
-1. Открыть <http://193.233.246.197/> и войти как `admin` с паролем из `.env`.
-2. Выполнить [`scripts/seed-test-data.sh`](scripts/seed-test-data.sh).
-3. В UI показать аренду RUB, сервер USD и подписку EUR со сроком через 2 дня.
-4. Дождаться планировщика и проверить `docker compose logs -f bot`.
-5. В Telegram нажать **✅ Оплачено**; в логах backend проверить PATCH 200.
-6. Убедиться, что повторное напоминание после `docker compose restart bot` не отправляется.
-
-## Тестовые данные и идемпотентный seed
+### Тестовые данные
 
 ```bash
-./scripts/seed-test-data.sh
+./scripts/seed-test-data.sh      # Windows: scripts\seed-test-data.bat
 ```
 
-Скрипт использует admin API и создаёт ровно три активных платежа с маркером `[DEMO]`:
+Скрипт идемпотентен: создаёт ровно три активных платежа с маркером `[DEMO]` — аренда (RUB), сервер (USD) и подписка (EUR) — со сроком через 2 дня. Повторный запуск не плодит дубликаты.
 
-- `[DEMO] Аренда офиса` — `50000 RUB`;
-- `[DEMO] Сервер VPS` — `20 USD`;
-- `[DEMO] Подписка Figma` — `15 EUR`.
-
-Перед созданием старые `[DEMO]` записи удаляются через API DELETE. DELETE в Go-бэкенде — soft-delete: история периодов сохраняется, но удалённый платёж больше не активен и не должен попадать в напоминания. Повторный запуск не плодит активные дубли.
-
-Контракт сверён с [`backend/openapi.yaml`](backend/openapi.yaml): `title`, `amount`, `currency`, `next_payment_date`, `periodicity`. Срок — через 2 дня, окно напоминания — `REMINDER_DAYS_BEFORE=3`.
-
-Проверки:
+### Smoke-тесты уведомлений
 
 ```bash
-docker compose exec bot python -c "import urllib.request; r=urllib.request.Request('http://backend:8000/api/v1/internal/due-occurrences',headers={'X-Internal-Token':'local_internal_token'}); print(urllib.request.urlopen(r).read().decode())"
-docker compose logs --tail=30 backend
-docker compose logs --tail=30 bot
+docker compose exec backend /app/smoketest -channel email
+docker compose exec bot python smoketest.py
 ```
 
-## Проверка стенда
+Коды выхода: `0` — доставка подтверждена, `1` — ошибка доставки, `3` — канал не настроен (пропуск, не ошибка деплоя). Секреты при этом не печатаются.
+
+---
+
+## 🚢 Деплой
+
+### GitHub Actions
+
+Ветка `mainn` → пайплайн [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+
+1. **test** — Go-тесты, сборка фронтенда, проверка синтаксиса Python.
+2. **deploy** — preflight секретов → настройка SSH → выгрузка `git archive` → `docker compose up -d --build --force-recreate` → health-check → smoke-тест email и Telegram.
+
+Секреты не попадают в вывод: preflight сообщает только **имена** отсутствующих переменных, но не их значения.
+
+Обязательные secrets в окружении `production`:
+
+| Secret | Пример |
+|--------|--------|
+| `VPS_HOST` | `193.233.246.197` |
+| `VPS_USER` | `root` |
+| `VPS_PATH` | `/opt/invoice-keeper` |
+| `VPS_SSH_PRIVATE_KEY` | приватный ключ в формате OpenSSH |
+
+### Ручной деплой
 
 ```bash
-./scripts/check-stand.sh
+git archive --format=tar.gz --output=invoice-keeper.tar.gz HEAD
+scp invoice-keeper.tar.gz user@host:/tmp/
+ssh user@host "mkdir -p /opt/invoice-keeper && tar -xzf /tmp/invoice-keeper.tar.gz -C /opt/invoice-keeper && cd /opt/invoice-keeper && docker compose up -d --build --force-recreate"
 ```
 
-Скрипт проверяет HTTP 200 frontend/Swagger/OpenAPI/login, статусы контейнеров, логи и наличие SQLite-файла бота. В конце он предупреждает, если `TELEGRAM_CHAT_ID` пустой или равен шаблонному `-1001234567890`.
+---
 
-## Управление
+## 🛠 Скрипты
 
-```bash
-docker compose up --build -d
-docker compose restart bot
-docker compose logs -f bot
-docker compose logs -f backend
-docker compose down
-docker compose down -v
-```
+| Скрипт | Назначение |
+|--------|-----------|
+| [`scripts/check-stand.sh`](scripts/check-stand.sh) | Проверка стенда: HTTP-коды, статусы контейнеров, логи, наличие БД |
+| [`scripts/seed-test-data.sh`](scripts/seed-test-data.sh) | Идемпотентный сид демо-данных через API |
+| [`scripts/seed-all-data.sh`](scripts/seed-all-data.sh) | Полный набор данных по всем валютам |
+| [`scripts/healthcheck.sh`](scripts/healthcheck.sh) | Быстрая проверка доступности сервисов |
+| [`scripts/check-bot.sh`](scripts/check-bot.sh) | Диагностика Telegram-бота |
+| [`scripts/init-db.sh`](scripts/init-db.sh) | Инициализация схемы БД |
+| [`scripts/validate-env.py`](scripts/validate-env.py) | Валидация `.env` |
+| [`scripts/validate-nginx.py`](scripts/validate-nginx.py) | Валидация nginx-конфигурации |
 
-`docker compose down -v` удаляет все данные, включая `invoice_backenddata` и `invoice_botdata`. Обычный restart бота сохраняет `/app/data/notifications.db` в volume `botdata`.
+Для Windows без WSL доступны `.bat`-версии: `scripts\check-stand.bat`, `scripts\seed-test-data.bat`, `scripts\reset-demo.bat`.
 
-## Финальная диагностика
+---
 
-На текущем стенде проверены:
+## ⚠️ Известные ограничения
 
-- `bot` — `Up (healthy)`;
-- Telegram API из bot-контейнера — HTTP 200;
-- `getMe` — `ok:true`;
-- backend из bot-контейнера — HTTP 200;
-- `check-stand.sh` — frontend, Swagger, OpenAPI и login возвращают 200;
-- internal endpoint после сидинга возвращает due-occurrences.
+- **PostgreSQL в compose не используется бэкендом.** Текущий Go-код написан под SQLite: DDL-миграции используют `AUTOINCREMENT`, запросы — плейсхолдеры `?`, а код опирается на `Result.LastInsertId()`, что `pgx` не поддерживает. Переключение требует правок Go-кода (`SERIAL`, `$1`, `RETURNING id`). Рабочие данные лежат в volume `invoice_backenddata`.
+- **DELETE — это soft-delete.** История периодов сохраняется, платёж просто перестаёт быть активным и не попадает в напоминания.
+- **Публикация PostgreSQL и Redis на хост.** В `docker-compose.yml` порты `5432` и `6379` пробрасываются наружу. Для продакшена их следует привязать к `127.0.0.1` или убрать из `ports:`.
+- **Кракозябры в кириллице** — признак отправки данных в `cp1251`/`cp866`. Скрипты хранятся в UTF-8 без BOM и используют `curl --data-binary` с заголовком `Content-Type: application/json; charset=utf-8`.
+- **Путь `api.telegram.org` может быть заблокирован** провайдером — используйте вариант с Cloudflare Worker.
 
-Если internal endpoint возвращает больше трёх demo-периодов после повторного запуска, это блокер soft-delete/фильтрации в зоне Backend; Go-код инфраструктурой не изменяется.
+---
+
+## 📄 Лицензия
+
+MIT. Исходный код фронтенда взят из [`Vatalone/aeza`](https://github.com/Vatalone/aeza), бэкенд — из [`reznicenkodaniil5/hack`](https://github.com/reznicenkodaniil5/hack), бот написан для этого проекта.
+
+---
+
+<p align="center">
+  <sub>Invoice Keeper — учёт регулярных платежей с напоминаниями. Сделано с ❤️ для осеннего хакатона.</sub>
+</p>
