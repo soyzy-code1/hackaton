@@ -26,10 +26,18 @@ type gigaTokenResponse struct {
 	ExpiresAt   int64  `json:"expires_at"`
 }
 
+// gigaFunctionCall is a function call requested by the model. GigaChat returns
+// the arguments as a JSON object, but a JSON encoded string is also accepted.
+type gigaFunctionCall struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
 type gigaCompletionResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content      string            `json:"content"`
+			FunctionCall *gigaFunctionCall `json:"function_call"`
 		} `json:"message"`
 	} `json:"choices"`
 }

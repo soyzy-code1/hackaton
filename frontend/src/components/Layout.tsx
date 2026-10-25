@@ -14,6 +14,7 @@ import {
   Users,
   X,
   MessageCircleQuestion,
+  Sparkles,
 } from 'lucide-react';
 import { isUsingMockBackend } from '@/api/client';
 import { ROLE_LABELS } from '@/api/types';
@@ -35,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/analytics', label: 'Аналитика', icon: <BarChart3 className="h-4 w-4" aria-hidden="true" /> },
   { to: '/notifications', label: 'Уведомления', icon: <Bell className="h-4 w-4" aria-hidden="true" /> },
   { to: '/assistant', label: 'Помощь ИИ', icon: <MessageCircleQuestion className="h-4 w-4" aria-hidden="true" />, userOnly: true },
+  { to: '/subscription-analysis', label: 'Анализ подписок', icon: <Sparkles className="h-4 w-4" aria-hidden="true" />, userOnly: true },
   { to: '/recurring', label: 'Платежи', icon: <ReceiptText className="h-4 w-4" aria-hidden="true" />, adminOnly: true },
   { to: '/users', label: 'Пользователи', icon: <Users className="h-4 w-4" aria-hidden="true" />, adminOnly: true },
   { to: '/audit-log', label: 'Журнал действий', icon: <ClipboardList className="h-4 w-4" aria-hidden="true" />, adminOnly: true },

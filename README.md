@@ -81,6 +81,14 @@
 - Локальный SQLite-журнал отправок не даёт прислать одно и то же напоминание дважды.
 - **GigaChat** — встроенный AI-ассистент на странице `/assistant` отвечает на вопросы по платежам.
 
+### 🔎 Анализ подписок (AI + поиск в интернете)
+
+- Страница `/subscription-analysis` сравнивает подписки из базы с актуальными ценами из интернета.
+- **Как это работает:** бэкенд определяет тематическую категорию сервиса (стриминг музыки, облачное хранилище, …), ищет цены через GigaChat (функция `web_search`) и собирает подтверждённые цены со страниц-источников.
+- **Что показывается сверху:** название более дешёвого сервиса, на сколько дешевле в месяц и в год, процент экономии, ссылка на источник и цитата, подтверждающая цену.
+- **Гарантии корректности:** экономия пересчитывается бэкендом по ценам из базы, а не берётся из ответа модели; отбрасываются варианты с другим функционалом, с той же ценой или без подтверждённой цены.
+- Требуются `GIGACHAT_ENABLED=true`, `GIGACHAT_CREDENTIALS` и `SEARCH_ENABLED=true`.
+
 ### 📊 Аналитика и планирование
 
 - **Дашборд** — сводка по доходам/расходам, ближайшие платежи, просроченные начисления, фильтры по статусу и валюте.
@@ -253,6 +261,7 @@ docker compose ps
 | **SMTP** | `SMTP_ENABLED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO` | Email-напоминания |
 | **Webhook** | `WEBHOOK_ENABLED`, `WEBHOOK_URL`, `WEBHOOK_SECRET` | Внешние подписки на события |
 | **GigaChat** | `GIGACHAT_ENABLED`, `GIGACHAT_CREDENTIALS`, `GIGACHAT_SCOPE`, `GIGACHAT_AUTH_URL`, `GIGACHAT_API_URL`, `GIGACHAT_MODEL`, `GIGACHAT_VERIFY_TLS` | AI-ассистент на странице `/assistant` (шаблон — в [`backend/.env.example`](backend/.env.example)) |
+| **Поиск** | `SEARCH_ENABLED`, `SEARCH_ENGINE`, `SEARCH_FETCH_PAGES`, `SEARCH_TIMEOUT_SECONDS`, `SEARCH_MAX_PAYMENTS` | Поиск цен в интернете для анализа подписок |
 | **БД** | `DATABASE_URL`, `POSTGRES_*`, `REDIS_URL` | Подключения к хранилищам |
 | **Порты** | `HTTP_PORT`, `FRONTEND_PORT`, `BACKEND_PORT`, `POSTGRES_PORT`, `REDIS_PORT` | Публикация портов на хост |
 
@@ -288,6 +297,7 @@ docker compose up -d --build --force-recreate bot
 | **summary** | `GET /payments/summary` | все |
 | **audit-log** | `GET /audit-log` | admin |
 | **assistant** | `POST /chat/gigachat` | user |
+| **assistant** | `POST /assistant/subscription-analysis` | user |
 | **internal** | `GET /internal/due-occurrences`, `POST /internal/occurrences/{id}/mark-reminded`, `POST /internal/notifications` | `X-Internal-Token` |
 
 Полное описание — в [`backend/openapi.yaml`](backend/openapi.yaml) и в Swagger UI на `/api/v1/docs`.

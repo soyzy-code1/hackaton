@@ -514,8 +514,137 @@ paths:
           description: Период не найден
         '401':
           description: Неверный internal-токен
+  /api/v1/assistant/subscription-analysis:
+    post:
+      tags:
+        - assistant
+      summary: "Анализ подписок: поиск более дешёвых альтернатив"
+      description: |
+        GigaChat ищет в интернете актуальные цены на подписки пользователя и
+        предлагает функционально похожие сервисы, которые дешевле. Экономия
+        пересчитывается бэкендом по ценам из базы.
+      operationId: analyze_subscriptions_api_v1_assistant_subscription_analysis_post
+      security:
+        - HTTPBearer: []
+      responses:
+        '200':
+          description: Результат анализа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionAnalysisOut'
+        '401':
+          description: Требуется авторизация
+        '422':
+          description: Нет активных подписок для анализа
+        '503':
+          description: GigaChat или поиск в интернете не настроены
 components:
   schemas:
+    SubscriptionAlternativeOut:
+      type: object
+      title: Более выгодная альтернатива
+      required:
+        [payment_id, payment_title, current_price, current_currency, service_name,
+         alternative_price, alternative_currency, monthly_saving, annual_saving,
+         saving_percent, similarity, reason, source_url, evidence]
+      properties:
+        payment_id:
+          type: integer
+          title: ID платежа в системе
+        payment_title:
+          type: string
+          title: Текущая подписка
+        current_price:
+          type: string
+          title: Текущая цена
+        current_currency:
+          type: string
+          title: Валюта текущей цены
+        service_name:
+          type: string
+          title: Название предлагаемого сервиса
+        alternative_price:
+          type: string
+          title: Цена альтернативы
+        alternative_currency:
+          type: string
+          title: Валюта цены альтернативы
+        monthly_saving:
+          type: string
+          title: Экономия в месяц
+        annual_saving:
+          type: string
+          title: Экономия в год
+        saving_percent:
+          type: string
+          title: Экономия в процентах
+        similarity:
+          type: string
+          enum: [high, medium]
+          title: Насколько похож функционал
+        reason:
+          type: string
+          title: Обоснование
+        source_url:
+          type: string
+          title: Ссылка на источник цены
+        evidence:
+          type: string
+          title: Цитата, подтверждающая цену
+    AnalysedSubscriptionOut:
+      type: object
+      title: Проверенная подписка
+      required: [id, title, amount, currency, periodicity, searched, query_count, price_hits]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        amount:
+          type: string
+        currency:
+          type: string
+        periodicity:
+          type: string
+        searched:
+          type: boolean
+        query_count:
+          type: integer
+        price_hits:
+          type: integer
+        best_saving:
+          type: string
+          nullable: true
+    SubscriptionAnalysisOut:
+      type: object
+      title: Результат анализа подписок
+      required: [analyzed_at, summary, alternatives, subscriptions, search_queries, warnings]
+      properties:
+        analyzed_at:
+          type: string
+          format: date-time
+        summary:
+          type: string
+          title: Краткое резюме
+        best_alternative:
+          allOf:
+            - $ref: '#/components/schemas/SubscriptionAlternativeOut'
+          nullable: true
+        alternatives:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubscriptionAlternativeOut'
+        subscriptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnalysedSubscriptionOut'
+        search_queries:
+          type: integer
+        warnings:
+          type: array
+          items:
+            type: string
     Currency:
       type: string
       enum: [RUB, USD, EUR]

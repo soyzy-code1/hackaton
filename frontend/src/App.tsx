@@ -37,6 +37,9 @@ const AuditLogPage = lazy(() =>
 const AssistantPage = lazy(() =>
   import('@/pages/AssistantPage').then((m) => ({ default: m.AssistantPage })),
 );
+const SubscriptionAnalysisPage = lazy(() =>
+  import('@/pages/SubscriptionAnalysisPage').then((m) => ({ default: m.SubscriptionAnalysisPage })),
+);
 
 function PageLoader() {
   return (
@@ -72,6 +75,7 @@ export function App() {
         <Route path="/users" element={<Protected role="admin"><UsersPage /></Protected>} />
         <Route path="/audit-log" element={<Protected role="admin"><AuditLogPage /></Protected>} />
         <Route path="/assistant" element={<Protected role="user"><AssistantPage /></Protected>} />
+        <Route path="/subscription-analysis" element={<Protected role="user"><SubscriptionAnalysisPage /></Protected>} />
         <Route path="/404" element={<NotFoundPage />} />
         <Route path="*" element={<Navigate to="/404" replace />} />
       </Routes>

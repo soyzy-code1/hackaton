@@ -16,6 +16,7 @@ import {
   mockUpdateUser,
 } from './mock';
 import type {
+  AnalysedSubscription,
   BudgetPlan,
   BulkOccurrenceUpdatePayload,
   CreateRecurringPaymentPayload,
@@ -31,6 +32,8 @@ import type {
   RecurringPayment,
   AuditLogEntry,
   AuditLogResponse,
+  SubscriptionAlternative,
+  SubscriptionAnalysis,
   Summary,
   SummaryQuery,
   UpdateOccurrencePayload,
@@ -667,6 +670,61 @@ export const api = {
       });
       const record = asRecord(response);
       return { message: asString(record.message) };
+    },
+
+    analyzeSubscriptions: async (): Promise<SubscriptionAnalysis> => {
+      const response = await request<unknown>('/assistant/subscription-analysis', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const record = asRecord(response);
+      const normalizeAlternative = (raw: unknown): SubscriptionAlternative => {
+        const item = asRecord(raw);
+        return {
+          payment_id: asNumber(item.payment_id),
+          payment_title: asString(item.payment_title),
+          current_price: asNumber(item.current_price),
+          current_currency: asString(item.current_currency, 'RUB'),
+          service_name: asString(item.service_name),
+          alternative_price: asNumber(item.alternative_price),
+          alternative_currency: asString(item.alternative_currency, 'RUB'),
+          monthly_saving: asNumber(item.monthly_saving),
+          annual_saving: asNumber(item.annual_saving),
+          saving_percent: asNumber(item.saving_percent),
+          similarity: (asString(item.similarity, 'medium') === 'high' ? 'high' : 'medium'),
+          reason: asString(item.reason),
+          source_url: asString(item.source_url),
+          evidence: asString(item.evidence),
+        };
+      };
+      const alternatives = normalizeList(record.alternatives, normalizeAlternative);
+      const subscriptions = normalizeList(record.subscriptions, (raw): AnalysedSubscription => {
+        const item = asRecord(raw);
+        return {
+          id: asNumber(item.id),
+          title: asString(item.title),
+          amount: asNumber(item.amount),
+          currency: asString(item.currency, 'RUB'),
+          periodicity: asString(item.periodicity, 'monthly'),
+          searched: Boolean(item.searched),
+          query_count: asNumber(item.query_count),
+          price_hits: asNumber(item.price_hits),
+          best_saving: item.best_saving == null ? null : asNumber(item.best_saving),
+        };
+      });
+      const bestRaw = record.best_alternative;
+      const bestAlternative = bestRaw && typeof bestRaw === 'object'
+        ? normalizeAlternative(bestRaw)
+        : (alternatives[0] ?? null);
+      return {
+        analyzed_at: asString(record.analyzed_at),
+        summary: asString(record.summary),
+        best_alternative: bestAlternative,
+        alternatives,
+        subscriptions,
+        search_queries: asNumber(record.search_queries),
+        warnings: normalizeList(record.warnings, (raw) => asString(raw)),
+      };
     },
   },
 };

@@ -60,6 +60,7 @@ func NewRouter(cfg config.Config, st *store.Store) *gin.Engine {
 
 	v1.GET("/payments/summary", authMiddleware(cfg, st), s.summary)
 	v1.POST("/chat/gigachat", authMiddleware(cfg, st), requireUser, s.chatWithGigaChat)
+	v1.POST("/assistant/subscription-analysis", authMiddleware(cfg, st), s.analyzeSubscriptions)
 	v1.GET("/audit-log", authMiddleware(cfg, st), requireAdmin, s.listAuditLogs)
 
 	budgets := v1.Group("/budgets", authMiddleware(cfg, st))

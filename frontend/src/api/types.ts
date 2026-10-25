@@ -102,6 +102,47 @@ export interface UpdateOccurrencePayload { status?: Extract<PaymentStatus, 'paid
 export interface CreateUserPayload { username: string; password: string; role?: Role; }
 export interface UpdateUserPayload { username?: string; password?: string; role?: Role; }
 
+export type AlternativeSimilarity = 'high' | 'medium';
+
+export interface SubscriptionAlternative {
+  payment_id: number;
+  payment_title: string;
+  current_price: number;
+  current_currency: string;
+  service_name: string;
+  alternative_price: number;
+  alternative_currency: string;
+  monthly_saving: number;
+  annual_saving: number;
+  saving_percent: number;
+  similarity: AlternativeSimilarity;
+  reason: string;
+  source_url: string;
+  evidence: string;
+}
+
+export interface AnalysedSubscription {
+  id: number;
+  title: string;
+  amount: number;
+  currency: string;
+  periodicity: string;
+  searched: boolean;
+  query_count: number;
+  price_hits: number;
+  best_saving: number | null;
+}
+
+export interface SubscriptionAnalysis {
+  analyzed_at: string;
+  summary: string;
+  best_alternative: SubscriptionAlternative | null;
+  alternatives: SubscriptionAlternative[];
+  subscriptions: AnalysedSubscription[];
+  search_queries: number;
+  warnings: string[];
+}
+
 export interface AuditLogEntry {
   id: number; user_id: number | null; action: string; entity: string; entity_id: number | null; details: string; created_at: string;
 }

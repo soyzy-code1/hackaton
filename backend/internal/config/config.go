@@ -19,13 +19,19 @@ type Config struct {
 	TelegramChatID     string
 	InternalAPIToken   string
 
-	GigaChatEnabled       bool
-	GigaChatCredentials    string
-	GigaChatScope         string
-	GigaChatAuthURL       string
-	GigaChatAPIURL        string
-	GigaChatModel         string
-	GigaChatVerifyTLS     bool
+	GigaChatEnabled    bool
+	GigaChatCredentials string
+	GigaChatScope      string
+	GigaChatAuthURL    string
+	GigaChatAPIURL     string
+	GigaChatModel      string
+	GigaChatVerifyTLS  bool
+
+	SearchEnabled     bool
+	SearchEngine      string
+	SearchFetchPages  int
+	SearchTimeoutSec  int
+	SearchMaxPayments int
 
 	SMTPEnabled    bool
 	SMTPHost       string
@@ -66,6 +72,12 @@ func Load() Config {
 		GigaChatModel:      getenv("GIGACHAT_MODEL", "GigaChat"),
 		GigaChatVerifyTLS:  getenvBool("GIGACHAT_VERIFY_TLS", true),
 
+		SearchEnabled:     getenvBool("SEARCH_ENABLED", true),
+		SearchEngine:      getenv("SEARCH_ENGINE", "seznam"),
+		SearchFetchPages:  getenvInt("SEARCH_FETCH_PAGES", 3),
+		SearchTimeoutSec:  getenvInt("SEARCH_TIMEOUT_SECONDS", 15),
+		SearchMaxPayments: getenvInt("SEARCH_MAX_PAYMENTS", 12),
+
 		SMTPEnabled:    getenvBool("SMTP_ENABLED", false),
 		SMTPHost:       getenv("SMTP_HOST", ""),
 		SMTPPort:       getenvInt("SMTP_PORT", 587),
@@ -96,6 +108,12 @@ func (c Config) GigaChatConfigured() bool {
 
 func (c Config) WebhookConfigured() bool {
 	return c.WebhookEnabled && c.WebhookURL != ""
+}
+
+// SearchConfigured reports whether the web search used by the subscription
+// analysis is enabled.
+func (c Config) SearchConfigured() bool {
+	return c.SearchEnabled && strings.TrimSpace(c.SearchEngine) != ""
 }
 
 func getenv(key, def string) string {
