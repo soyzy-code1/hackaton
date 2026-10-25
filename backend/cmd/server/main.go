@@ -8,6 +8,7 @@ import (
 	"invoicekeeper/internal/config"
 	"invoicekeeper/internal/db"
 	"invoicekeeper/internal/handlers"
+	"invoicekeeper/internal/notify"
 	"invoicekeeper/internal/service"
 	"invoicekeeper/internal/store"
 )
@@ -25,6 +26,10 @@ func main() {
 	if err := service.EnsureAdmin(st, cfg); err != nil {
 		log.Fatal(err)
 	}
+	// Probe the SMTP transport once at boot: a misconfigured host or a blocked
+	// egress port is the most common reason reminders never arrive, and the
+	// probe makes the cause visible in the container log without sending mail.
+	notify.LogSMTPStatus(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	service.StartNotifyWorker(ctx, cfg, st)

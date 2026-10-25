@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -167,6 +168,152 @@ func TestInternalDue(t *testing.T) {
 	r.ServeHTTP(wM, reqM)
 	if wM.Code != 204 {
 		t.Fatal(wM.Code)
+	}
+}
+
+// TestInternalDueIncludesOverdue pins the due-occurrence semantics shared by the
+// backend and the bot.
+//
+// The backend used to filter `due_date >= today`, which hid every overdue
+// payment from the email, webhook and internal reminder channels while the bot
+// (bot/api_client.py) happily reported the same payments. The rule is now
+// "unpaid and due no later than the horizon", so overdue occurrences must be
+// returned as well.
+func TestInternalDueIncludesOverdue(t *testing.T) {
+	r, _ := testRouter(t)
+	token := login(t, r, "admin", "admin123")
+	today := dates.TodayInTZ("Europe/Moscow")
+
+	overdue := today.AddDate(0, 0, -5)
+	upcoming := today.AddDate(0, 0, 2)
+	tooLate := today.AddDate(0, 0, 30)
+
+	for _, tc := range []struct {
+		title string
+		due   time.Time
+	}{
+		{"Overdue bill", overdue},
+		{"Upcoming bill", upcoming},
+		{"Distant bill", tooLate},
+	} {
+		create := `{"title":"` + tc.title + `","amount":"10","currency":"RUB","next_payment_date":"` + dates.FormatDate(tc.due) + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/recurring-payments", bytes.NewBufferString(create))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create %s: %d %s", tc.title, w.Code, w.Body.String())
+		}
+	}
+
+	reqD := httptest.NewRequest(http.MethodGet, "/api/v1/internal/due-occurrences", nil)
+	reqD.Header.Set("X-Internal-Token", "test-internal-token")
+	wD := httptest.NewRecorder()
+	r.ServeHTTP(wD, reqD)
+	if wD.Code != http.StatusOK {
+		t.Fatalf("due occurrences: %d %s", wD.Code, wD.Body.String())
+	}
+
+	var items []map[string]interface{}
+	if err := json.Unmarshal(wD.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]int{}
+	for _, item := range items {
+		title, _ := item["title"].(string)
+		got[title] = int(item["days_left"].(float64))
+	}
+
+	if _, ok := got["Overdue bill"]; !ok {
+		t.Fatalf("overdue occurrence is missing from due list: %+v", items)
+	}
+	if _, ok := got["Upcoming bill"]; !ok {
+		t.Fatalf("upcoming occurrence is missing from due list: %+v", items)
+	}
+	if _, ok := got["Distant bill"]; ok {
+		t.Fatalf("occurrence beyond the reminder horizon must not be listed: %+v", items)
+	}
+	if days := got["Overdue bill"]; days >= 0 {
+		t.Fatalf("overdue occurrence must report negative days_left, got %d", days)
+	}
+}
+
+// TestInternalDueSkipsReminded guards the deduplication of the reminder
+// channel: an occurrence that was already marked as reminded must not be
+// returned again, and marking it twice must stay idempotent.
+func TestInternalDueSkipsReminded(t *testing.T) {
+	r, _ := testRouter(t)
+	token := login(t, r, "admin", "admin123")
+	today := dates.TodayInTZ("Europe/Moscow")
+	due := today.AddDate(0, 0, -1)
+
+	create := `{"title":"Reminded bill","amount":"10","currency":"RUB","next_payment_date":"` + dates.FormatDate(due) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/recurring-payments", bytes.NewBufferString(create))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+
+	listDue := func() []map[string]interface{} {
+		t.Helper()
+		reqD := httptest.NewRequest(http.MethodGet, "/api/v1/internal/due-occurrences", nil)
+		reqD.Header.Set("X-Internal-Token", "test-internal-token")
+		wD := httptest.NewRecorder()
+		r.ServeHTTP(wD, reqD)
+		if wD.Code != http.StatusOK {
+			t.Fatalf("due occurrences: %d %s", wD.Code, wD.Body.String())
+		}
+		var items []map[string]interface{}
+		if err := json.Unmarshal(wD.Body.Bytes(), &items); err != nil {
+			t.Fatal(err)
+		}
+		return items
+	}
+
+	items := listDue()
+	if len(items) != 1 {
+		t.Fatalf("expected exactly one due occurrence, got %d: %+v", len(items), items)
+	}
+	oid := int(items[0]["id"].(float64))
+
+	mark := httptest.NewRequest(http.MethodPost, "/api/v1/internal/occurrences/"+itoa(oid)+"/mark-reminded", nil)
+	mark.Header.Set("X-Internal-Token", "test-internal-token")
+	wM := httptest.NewRecorder()
+	r.ServeHTTP(wM, mark)
+	if wM.Code != http.StatusNoContent {
+		t.Fatalf("mark reminded: %d %s", wM.Code, wM.Body.String())
+	}
+
+	if items = listDue(); len(items) != 0 {
+		t.Fatalf("reminded occurrence must not be listed again: %+v", items)
+	}
+
+	repeat := httptest.NewRequest(http.MethodPost, "/api/v1/internal/occurrences/"+itoa(oid)+"/mark-reminded", nil)
+	repeat.Header.Set("X-Internal-Token", "test-internal-token")
+	wR := httptest.NewRecorder()
+	r.ServeHTTP(wR, repeat)
+	if wR.Code != http.StatusOK {
+		t.Fatalf("repeat mark reminded: %d %s", wR.Code, wR.Body.String())
+	}
+}
+
+// TestInternalDueRequiresToken makes sure the internal endpoint stays closed
+// to anonymous callers: the bot authenticates with X-Internal-Token.
+func TestInternalDueRequiresToken(t *testing.T) {
+	r, _ := testRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/due-occurrences", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without internal token, got %d", w.Code)
 	}
 }
 

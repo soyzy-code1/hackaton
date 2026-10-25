@@ -430,6 +430,12 @@ func (s *Store) MarkWebhookReminderSent(id int) error {
 	return err
 }
 
+// listDueWithSentColumn returns unpaid occurrences that still need a reminder.
+//
+// The window is [today - anything, today + horizon]: overdue occurrences are
+// included on purpose. The bot (bot/api_client.py) filters occurrences only by
+// an upper bound, so the backend used to disagree with it and silently skipped
+// every overdue payment. A shared rule keeps both channels consistent.
 func (s *Store) listDueWithSentColumn(today time.Time, horizon int, sentColumn string) ([]models.PaymentOccurrence, error) {
 	switch sentColumn {
 	case "reminder_sent_at", "email_reminder_sent_at", "webhook_reminder_sent_at":
@@ -440,9 +446,9 @@ func (s *Store) listDueWithSentColumn(today time.Time, horizon int, sentColumn s
 		p.id, p.title, p.amount, p.currency, p.periodicity, p.next_payment_date, p.is_active, p.created_by, p.created_at, p.updated_at, p.deleted_at
 		FROM payment_occurrences o
 		JOIN recurring_payments p ON p.id = o.recurring_payment_id
-		WHERE o.is_paid = 0 AND (o.` + sentColumn + ` IS NULL OR o.` + sentColumn + ` = '') AND date(o.due_date) >= date(?)
+		WHERE o.is_paid = 0 AND (o.` + sentColumn + ` IS NULL OR o.` + sentColumn + ` = '') AND date(o.due_date) <= date(?)
 		AND p.deleted_at IS NULL AND p.is_active = 1`
-	rows, err := s.DB.Query(q, formatDate(today))
+	rows, err := s.DB.Query(q, formatDate(today.AddDate(0, 0, horizon)))
 	if err != nil {
 		return nil, err
 	}

@@ -82,12 +82,11 @@ func Load() Config {
 
 func (c Config) SMTPConfigured() bool {
 	return c.SMTPEnabled &&
-		c.SMTPHost != "" &&
+		strings.TrimSpace(c.SMTPHost) != "" &&
 		c.SMTPPort > 0 &&
-		c.SMTPUser != "" &&
+		strings.TrimSpace(c.SMTPUser) != "" &&
 		c.SMTPPassword != "" &&
-		c.SMTPFrom != "" &&
-		c.SMTPTo != ""
+		strings.TrimSpace(c.SMTPTo) != ""
 }
 
 func (c Config) GigaChatConfigured() bool {

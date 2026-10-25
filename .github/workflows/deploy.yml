@@ -12,13 +12,13 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -28,7 +28,7 @@ jobs:
         run: go test ./...
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -45,13 +45,33 @@ jobs:
 
   deploy:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Validate deployment secrets
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+          DEPLOY_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [ -n "$VPS_HOST" ] || missing+=(VPS_HOST)
+          [ -n "$VPS_USER" ] || missing+=(VPS_USER)
+          [ -n "$VPS_PATH" ] || missing+=(VPS_PATH)
+          [ -n "$DEPLOY_KEY" ] || missing+=(VPS_SSH_PRIVATE_KEY)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Deployment is not configured: missing required production secret(s): ${missing[*]}"
+            echo "Create these secrets in the production environment before running deploy. Values are intentionally not printed."
+            exit 1
+          fi
+          echo "Deployment secrets are present (values hidden)."
 
       - name: Configure SSH
+        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
         env:
           DEPLOY_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -62,18 +82,36 @@ jobs:
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
       - name: Create source archive
+        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
         run: git archive --format=tar.gz --output=invoice-keeper.tar.gz HEAD
 
+      - name: Verify SSH access
+        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: ssh -o BatchMode=yes -o ConnectTimeout=15 "$VPS_USER@$VPS_HOST" 'echo SSH connection established'
+
       - name: Upload and deploy
+        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PATH: ${{ secrets.VPS_PATH }}
         run: |
-          scp invoice-keeper.tar.gz "$VPS_USER@$VPS_HOST:/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz"
-          ssh "$VPS_USER@$VPS_HOST" "set -e; mkdir -p '$VPS_PATH'; tar -xzf '/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz' -C '$VPS_PATH'; rm -f '/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz'; cd '$VPS_PATH'; test -f .env; test -f bot/.env; chmod 600 .env bot/.env; docker compose config --quiet; docker compose up -d --build; docker compose ps"
+          scp -o BatchMode=yes -o ConnectTimeout=30 invoice-keeper.tar.gz "$VPS_USER@$VPS_HOST:/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz"
+          ssh -o BatchMode=yes -o ConnectTimeout=30 "$VPS_USER@$VPS_HOST" "set -e; mkdir -p '$VPS_PATH'; tar -xzf '/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz' -C '$VPS_PATH'; rm -f '/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz'; cd '$VPS_PATH'; test -f .env; test -f bot/.env; chmod 600 .env bot/.env; docker compose config --quiet; docker compose up -d --build --force-recreate; docker compose ps"
+
+      - name: Show deployment diagnostics on failure
+        if: ${{ failure() && secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: ssh -o BatchMode=yes -o ConnectTimeout=15 "$VPS_USER@$VPS_HOST" "cd '$VPS_PATH' && docker compose ps && docker compose logs --tail=80 backend bot"
 
       - name: Production smoke test
+        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
         run: |
@@ -84,3 +122,38 @@ jobs:
           done
           echo "Production healthcheck failed"
           exit 1
+
+      - name: Verify notification delivery
+        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          # The smoke tests print transport-level results only: no credential is
+          # echoed and no secret is passed through the command line. Exit code 3
+          # means the channel is not configured on this host, which is not a
+          # deployment failure; exit code 1 is a real delivery failure.
+          set +e
+          ssh -o BatchMode=yes -o ConnectTimeout=30 "$VPS_USER@$VPS_HOST" "cd '$VPS_PATH' && docker compose exec -T backend /app/smoketest -channel email"
+          email_code=$?
+          ssh -o BatchMode=yes -o ConnectTimeout=30 "$VPS_USER@$VPS_HOST" "cd '$VPS_PATH' && docker compose exec -T bot python smoketest.py"
+          telegram_code=$?
+          set -e
+
+          failed=0
+          if [ "$email_code" -eq 1 ]; then
+            echo "::error::Email delivery check failed on the production host."
+            failed=1
+          elif [ "$email_code" -eq 3 ]; then
+            echo "Email channel is not configured on the production host (skipped)."
+          fi
+
+          if [ "$telegram_code" -eq 1 ]; then
+            echo "::error::Telegram delivery check failed on the production host."
+            failed=1
+          elif [ "$telegram_code" -eq 3 ]; then
+            echo "Telegram channel is not configured on the production host (skipped)."
+          fi
+
+          exit "$failed"

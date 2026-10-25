@@ -6,6 +6,7 @@ import signal
 import sys
 
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramConflictError, TelegramNetworkError, TelegramRetryAfter
 
 from api_client import BackendAPIClient
 from channels.telegram import TelegramChannel, create_bot
@@ -15,38 +16,82 @@ from notifier import Notifier
 from scheduler import create_scheduler
 from storage import NotificationStore
 
+# Long-poll timeout and the request timeout that must outlive it.
+POLL_TIMEOUT = 30
+POLL_REQUEST_TIMEOUT = POLL_TIMEOUT + 15
+
 
 def setup_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 
+def is_conflict_error(exc: BaseException) -> bool:
+    """Detect Telegram's 409 Conflict in a version-independent way.
+
+    aiogram raises TelegramConflictError, but the exact exception class depends
+    on the installed version and on the transport layer, so the message is
+    checked as well. A conflict means another consumer holds the same token:
+    retrying only hides the problem, so the caller must stop polling.
+    """
+    if isinstance(exc, TelegramConflictError):
+        return True
+    message = str(exc).lower()
+    return "terminated by other getupdates request" in message or "conflict" in message
+
+
 async def run_telegram_polling(dispatcher: Dispatcher, bot: Bot) -> None:
-    """Run exactly one polling consumer and stop on Telegram's conflict response."""
+    """Run exactly one polling consumer and stop on Telegram's conflict response.
+
+    The loop is implemented explicitly instead of relying on
+    ``Dispatcher.start_polling`` so that a conflict is detected by type, logged
+    with an actionable message and terminates the poller instead of spinning in
+    a retry loop that would spam the Bot API.
+    """
     logger = logging.getLogger("channel.telegram")
     delay = 5
+    offset: int | None = None
     while True:
         try:
-            await bot.delete_webhook(drop_pending_updates=False)
-            me = await bot.get_me()
-            logger.info("[telegram] connected as @%s, chat_id=%s", me.username, settings.telegram_chat_id)
+            if offset is None:
+                await bot.delete_webhook(drop_pending_updates=False)
+                me = await bot.get_me()
+                logger.info("[telegram] connected as @%s, chat_id=%s", me.username, settings.telegram_chat_id)
+            updates = await bot.get_updates(
+                offset=offset,
+                timeout=POLL_TIMEOUT,
+                request_timeout=POLL_REQUEST_TIMEOUT,
+                allowed_updates=["message", "callback_query"],
+            )
             delay = 5
-            await dispatcher.start_polling(bot, handle_signals=False, close_bot_session=False)
-            return
+            for update in updates:
+                offset = update.update_id + 1
+                try:
+                    await dispatcher.feed_update(bot, update)
+                except Exception:
+                    logger.exception("[telegram] failed to handle update %s", update.update_id)
         except asyncio.CancelledError:
             raise
+        except TelegramRetryAfter as exc:
+            retry_after = int(getattr(exc, "retry_after", 5) or 5)
+            logger.warning("[telegram] flood control: retry after %ss", retry_after)
+            await asyncio.sleep(retry_after)
         except Exception as exc:
-            if "Conflict: terminated by other getUpdates request" in str(exc):
+            if is_conflict_error(exc):
                 logger.critical(
-                    "[telegram] polling stopped: another process is using this bot token. "
-                    "Stop every other bot instance/local polling process before restarting this container."
+                    "[telegram] polling stopped: another process is using this bot token (%s). "
+                    "Stop every other bot instance/local polling process before restarting this container.",
+                    exc,
                 )
                 return
-            logger.error(
-                "[telegram] api.telegram.org unavailable (%s). Retry in %ss. "
-                "If Telegram is blocked in your network, set TELEGRAM_PROXY or TELEGRAM_API_URL in .env.",
-                exc, delay,
-            )
+            if isinstance(exc, TelegramNetworkError):
+                logger.error(
+                    "[telegram] api.telegram.org unavailable (%s). Retry in %ss. "
+                    "If Telegram is blocked in your network, set TELEGRAM_PROXY or TELEGRAM_API_URL in .env.",
+                    exc, delay,
+                )
+            else:
+                logger.exception("[telegram] polling failed (%s). Retry in %ss", exc, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, 120)
 
