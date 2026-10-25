@@ -10,6 +10,9 @@ concurrency:
   group: invoice-keeper-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-24.04
@@ -51,7 +54,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # The `secrets` context is NOT available in step-level `if` expressions.
+      # Guarding the deployment steps therefore has to happen through the
+      # `steps` context: this step validates the secrets and publishes the
+      # result as a step output that the later steps can check.
       - name: Validate deployment secrets
+        id: preflight
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -64,14 +72,17 @@ jobs:
           [ -n "$VPS_PATH" ] || missing+=(VPS_PATH)
           [ -n "$DEPLOY_KEY" ] || missing+=(VPS_SSH_PRIVATE_KEY)
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "Deployment is not configured: missing required production secret(s): ${missing[*]}"
-            echo "Create these secrets in the production environment before running deploy. Values are intentionally not printed."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Deployment is not configured: missing production secret(s): ${missing[*]}"
+            echo "Create these secrets in the 'production' environment before running the deploy."
+            echo "Values are intentionally not printed."
             exit 1
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
           echo "Deployment secrets are present (values hidden)."
 
       - name: Configure SSH
-        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        if: ${{ steps.preflight.outputs.configured == 'true' }}
         env:
           DEPLOY_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -82,18 +93,18 @@ jobs:
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
       - name: Create source archive
-        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        if: ${{ steps.preflight.outputs.configured == 'true' }}
         run: git archive --format=tar.gz --output=invoice-keeper.tar.gz HEAD
 
       - name: Verify SSH access
-        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        if: ${{ steps.preflight.outputs.configured == 'true' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: ssh -o BatchMode=yes -o ConnectTimeout=15 "$VPS_USER@$VPS_HOST" 'echo SSH connection established'
 
       - name: Upload and deploy
-        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        if: ${{ steps.preflight.outputs.configured == 'true' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -103,7 +114,7 @@ jobs:
           ssh -o BatchMode=yes -o ConnectTimeout=30 "$VPS_USER@$VPS_HOST" "set -e; mkdir -p '$VPS_PATH'; tar -xzf '/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz' -C '$VPS_PATH'; rm -f '/tmp/invoice-keeper-${GITHUB_SHA}.tar.gz'; cd '$VPS_PATH'; test -f .env; test -f bot/.env; chmod 600 .env bot/.env; docker compose config --quiet; docker compose up -d --build --force-recreate; docker compose ps"
 
       - name: Show deployment diagnostics on failure
-        if: ${{ failure() && secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        if: ${{ failure() && steps.preflight.outputs.configured == 'true' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -111,7 +122,7 @@ jobs:
         run: ssh -o BatchMode=yes -o ConnectTimeout=15 "$VPS_USER@$VPS_HOST" "cd '$VPS_PATH' && docker compose ps && docker compose logs --tail=80 backend bot"
 
       - name: Production smoke test
-        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        if: ${{ steps.preflight.outputs.configured == 'true' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
         run: |
@@ -124,7 +135,7 @@ jobs:
           exit 1
 
       - name: Verify notification delivery
-        if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_PATH != '' && secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        if: ${{ steps.preflight.outputs.configured == 'true' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
