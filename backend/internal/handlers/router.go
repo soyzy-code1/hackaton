@@ -62,6 +62,10 @@ func NewRouter(cfg config.Config, st *store.Store) *gin.Engine {
 	v1.POST("/chat/gigachat", authMiddleware(cfg, st), requireUser, s.chatWithGigaChat)
 	v1.POST("/assistant/subscription-analysis", authMiddleware(cfg, st), s.analyzeSubscriptions)
 	v1.GET("/audit-log", authMiddleware(cfg, st), requireAdmin, s.listAuditLogs)
+	v1.GET("/categories", authMiddleware(cfg, st), s.listCategories)
+	v1.POST("/categories", authMiddleware(cfg, st), requireAdmin, s.createCategory)
+	v1.DELETE("/categories/:name", authMiddleware(cfg, st), requireAdmin, s.deleteCategory)
+	v1.GET("/analytics/categories", authMiddleware(cfg, st), s.categoryAnalytics)
 
 	budgets := v1.Group("/budgets", authMiddleware(cfg, st))
 	budgets.GET("", s.listBudgets)
@@ -232,9 +236,48 @@ func (s *Server) login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"user": toUserOut(user)})
 }
 
+func (s *Server) listCategories(c *gin.Context) {
+	rows, err := s.St.DB.Query(`SELECT name FROM payment_categories WHERE is_active = 1 ORDER BY name`)
+	if err != nil { c.Status(http.StatusInternalServerError); return }
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() { var name string; if err := rows.Scan(&name); err != nil { c.Status(http.StatusInternalServerError); return }; out = append(out, name) }
+	c.JSON(http.StatusOK, out)
+}
+
+func (s *Server) createCategory(c *gin.Context) {
+	var body struct { Name string `json:"name"` }
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Name) == "" { writeAppError(c, apperr.ValidationError); return }
+	name := strings.TrimSpace(body.Name)
+	if _, err := s.St.DB.Exec(`INSERT INTO payment_categories (name) VALUES (?)`, name); err != nil { writeAppError(c, apperr.New(http.StatusConflict, "Category already exists", "CATEGORY_EXISTS")); return }
+	c.JSON(http.StatusCreated, gin.H{"name": name})
+}
+
+func (s *Server) deleteCategory(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" || name == "other" { writeAppError(c, apperr.ValidationError); return }
+	_, err := s.St.DB.Exec(`UPDATE payment_categories SET is_active = 0 WHERE name = ?`, name)
+	if err != nil { c.Status(http.StatusInternalServerError); return }
+	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) categoryAnalytics(c *gin.Context) {
+	currency := strings.ToUpper(strings.TrimSpace(c.DefaultQuery("currency", "RUB")))
+	isActive := true
+	payments, err := s.St.ListRecurringPaymentsByCategory(nil, &currency, &isActive)
+	if err != nil { c.Status(http.StatusInternalServerError); return }
+	type item struct { Category string `json:"category"`; Amount decimal.Decimal `json:"amount"`; Count int `json:"count"` }
+	by := map[string]*item{}
+	for _, p := range payments { category := firstNonEmpty(p.Category, "other"); if by[category] == nil { by[category] = &item{Category: category} }; by[category].Amount = by[category].Amount.Add(p.Amount); by[category].Count++ }
+	out := make([]item, 0, len(by)); for _, value := range by { out = append(out, *value) }
+	c.JSON(http.StatusOK, gin.H{"currency": currency, "items": out})
+}
+
 func (s *Server) listAuditLogs(c *gin.Context) {
 	page, _ := strconvAtoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconvAtoi(c.DefaultQuery("page_size", "25"))
+	if page < 1 { page = 1 }
+	if pageSize < 1 || pageSize > 100 { pageSize = 25 }
 	items, total, err := s.St.ListAuditLogs(page, pageSize, strings.TrimSpace(c.Query("action")))
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
@@ -438,6 +481,7 @@ func (s *Server) createRecurringPayment(c *gin.Context) {
 		Currency        string          `json:"currency"`
 		NextPaymentDate string          `json:"next_payment_date"`
 		Periodicity     string          `json:"periodicity"`
+		Category        string          `json:"category"`
 		AssignedUserIDs []int           `json:"assigned_user_ids"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -459,7 +503,7 @@ func (s *Server) createRecurringPayment(c *gin.Context) {
 	admin, _ := currentUser(c)
 	p := &models.RecurringPayment{
 		Title: body.Title, Amount: body.Amount, Currency: body.Currency,
-		Periodicity: body.Periodicity, NextPaymentDate: nd, IsActive: true, CreatedBy: admin.ID,
+		Periodicity: body.Periodicity, Category: firstNonEmpty(body.Category, "other"), NextPaymentDate: nd, IsActive: true, CreatedBy: admin.ID,
 	}
 	if err := s.St.CreateRecurringPayment(p); err != nil {
 		c.Status(http.StatusInternalServerError)
@@ -532,6 +576,7 @@ func (s *Server) updateRecurringPayment(c *gin.Context) {
 		Currency        *string          `json:"currency"`
 		NextPaymentDate *string          `json:"next_payment_date"`
 		Periodicity     *string          `json:"periodicity"`
+		Category        *string          `json:"category"`
 		IsActive        *bool            `json:"is_active"`
 		AssignedUserIDs *[]int           `json:"assigned_user_ids"`
 	}
@@ -570,6 +615,9 @@ func (s *Server) updateRecurringPayment(c *gin.Context) {
 			writeAppError(c, apperr.ValidationError)
 			return
 		}
+	}
+	if body.Category != nil {
+		payment.Category = firstNonEmpty(*body.Category, "other")
 	}
 	if body.IsActive != nil {
 		payment.IsActive = *body.IsActive

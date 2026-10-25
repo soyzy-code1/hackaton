@@ -9,6 +9,7 @@ import { buildMonthTrend, downloadCsv, formatAmount } from '@/lib/finance';
 import { formatDate, todayDateInputValue } from '@/lib/date';
 import { totalsAsOf, yearRange } from '@/lib/planning';
 import { PaidVsRemainingChart } from '@/components/charts/PaidVsRemainingChart';
+import { CategoryBudgetAnalytics } from '@/components/CategoryBudgetAnalytics';
 import '@/components/charts/registerCharts';
 import { Button } from '@/components/ui/Button';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
@@ -139,6 +140,8 @@ export function AnalyticsPage() {
         </div>
       </div>
 
+      <CategoryBudgetAnalytics />
+
       <section className="card p-5">
         <div className="mb-5 flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-blue-600" />
@@ -182,6 +185,7 @@ export function AnalyticsPage() {
             ))
         )}
       </section>
+      <CategoryBudgetAnalytics />
     </div>
   );
 }

@@ -32,6 +32,7 @@ import type {
   RecurringPayment,
   AuditLogEntry,
   AuditLogResponse,
+  CategoryAnalytics,
   SubscriptionAlternative,
   SubscriptionAnalysis,
   Summary,
@@ -639,6 +640,34 @@ export const api = {
         },
         () => mockDeleteUser(id),
       ),
+  },
+
+  categories: {
+    list: async (): Promise<string[]> => {
+      const response = await request<unknown>('/categories', { method: 'GET' });
+      return normalizeList(response, (raw) => asString(raw));
+    },
+    create: async (name: string): Promise<string> => {
+      const response = await request<unknown>('/categories', { method: 'POST', body: JSON.stringify({ name }) });
+      return asString(asRecord(response).name, name);
+    },
+    remove: async (name: string): Promise<void> => {
+      await request<unknown>(`/categories/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    },
+  },
+
+  analytics: {
+    categories: async (currency: Currency): Promise<CategoryAnalytics> => {
+      const response = await request<unknown>('/analytics/categories', { method: 'GET' }, { currency });
+      const record = asRecord(response);
+      return {
+        currency: asCurrency(record.currency),
+        items: normalizeList(record.items, (raw) => {
+          const item = asRecord(raw);
+          return { category: asString(item.category, 'other'), amount: asNumber(item.amount), count: asNumber(item.count) };
+        }),
+      };
+    },
   },
 
   auditLog: {

@@ -143,10 +143,16 @@ export interface SubscriptionAnalysis {
   warnings: string[];
 }
 
+export interface CategoryAnalyticsItem { category: string; amount: number; count: number; }
+export interface CategoryAnalytics { currency: Currency; items: CategoryAnalyticsItem[]; }
+
 export interface AuditLogEntry {
   id: number; user_id: number | null; action: string; entity: string; entity_id: number | null; details: string; created_at: string;
 }
 export interface AuditLogResponse { items: AuditLogEntry[]; total: number; page: number; page_size: number; }
+
+export interface CategoryAnalyticsItem { category: string; amount: number; count: number; }
+export interface CategoryAnalytics { currency: Currency; items: CategoryAnalyticsItem[]; }
 
 export const CURRENCIES: readonly Currency[] = ['RUB', 'USD', 'EUR'] as const;
 export const CURRENCY_SYMBOLS: Record<Currency, string> = { RUB: '₽', USD: '$', EUR: '€' };

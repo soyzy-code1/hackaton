@@ -24,6 +24,7 @@ type RecurringPayment struct {
 	Amount          decimal.Decimal
 	Currency        string
 	Periodicity     string
+	Category        string
 	NextPaymentDate time.Time
 	IsActive        bool
 	CreatedBy       int

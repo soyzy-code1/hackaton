@@ -117,9 +117,9 @@ func (s *Store) GetRecurringPayment(id int) (*models.RecurringPayment, error) {
 }
 
 func (s *Store) CreateRecurringPayment(p *models.RecurringPayment) error {
-	res, err := s.DB.Exec(`INSERT INTO recurring_payments (title, amount, currency, periodicity, next_payment_date, is_active, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.Title, p.Amount.StringFixed(2), p.Currency, p.Periodicity, formatDate(p.NextPaymentDate), p.IsActive, p.CreatedBy)
+	res, err := s.DB.Exec(`INSERT INTO recurring_payments (title, amount, currency, periodicity, category, next_payment_date, is_active, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Title, p.Amount.StringFixed(2), p.Currency, p.Periodicity, p.Category, formatDate(p.NextPaymentDate), p.IsActive, p.CreatedBy)
 	if err != nil {
 		return err
 	}
@@ -152,6 +152,20 @@ func (s *Store) PaymentAssignees(paymentID int) ([]int, error) {
 	return ids, rows.Err()
 }
 
+func (s *Store) ListRecurringPaymentsByCategory(category *string, currency *string, isActive *bool) ([]models.RecurringPayment, error) {
+	q := `SELECT id, title, amount, currency, periodicity, next_payment_date, is_active, created_by, created_at, updated_at, deleted_at
+		FROM recurring_payments WHERE 1=1`
+	args := []interface{}{}
+	if category != nil && *category != "" { q += ` AND category = ?`; args = append(args, *category) }
+	if currency != nil && *currency != "" { q += ` AND currency = ?`; args = append(args, *currency) }
+	if isActive != nil { q += ` AND is_active = ?`; args = append(args, *isActive) }
+	q += ` ORDER BY id`
+	rows, err := s.DB.Query(q, args...)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	return scanPayments(rows)
+}
+
 func (s *Store) GetBudgets(userID int) (map[string][2]string, error) {
 	rows, err := s.DB.Query(`SELECT currency, monthly_limit, yearly_limit FROM user_budgets WHERE user_id = ?`, userID)
 	if err != nil { return nil, err }
@@ -172,9 +186,9 @@ func (s *Store) UpsertBudget(userID int, currency, monthly, yearly string) error
 }
 
 func (s *Store) UpdateRecurringPayment(p *models.RecurringPayment) error {
-	_, err := s.DB.Exec(`UPDATE recurring_payments SET title=?, amount=?, currency=?, periodicity=?, next_payment_date=?, is_active=?, updated_at=CURRENT_TIMESTAMP, deleted_at=?
+	_, err := s.DB.Exec(`UPDATE recurring_payments SET title=?, amount=?, currency=?, periodicity=?, category=?, next_payment_date=?, is_active=?, updated_at=CURRENT_TIMESTAMP, deleted_at=?
 		WHERE id=?`,
-		p.Title, p.Amount.StringFixed(2), p.Currency, p.Periodicity, formatDate(p.NextPaymentDate), p.IsActive, p.DeletedAt, p.ID)
+		p.Title, p.Amount.StringFixed(2), p.Currency, p.Periodicity, p.Category, formatDate(p.NextPaymentDate), p.IsActive, p.DeletedAt, p.ID)
 	if err != nil {
 		return err
 	}

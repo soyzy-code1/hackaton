@@ -27,6 +27,9 @@ var paymentAssignmentsSQL string
 //go:embed migrations/007_audit_log.sql
 var auditLogSQL string
 
+//go:embed migrations/008_categories.sql
+var categoriesSQL string
+
 func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(initSQL); err != nil {
 		return err
@@ -78,6 +81,13 @@ func Migrate(db *sql.DB) error {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" { continue }
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return err
+		}
+	}
+	for _, stmt := range strings.Split(categoriesSQL, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" { continue }
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
 			return err
 		}
 	}
